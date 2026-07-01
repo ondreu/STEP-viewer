@@ -10,6 +10,13 @@ interface Live {
   textEl: HTMLElement;
 }
 
+/** Row data for the annotations list panel. */
+export interface AnnotationItem {
+  id: string;
+  text: string;
+  part: string;
+}
+
 /**
  * Notes pinned to points on the model (design doc §1 extension). Each note is a
  * pin (a child of the model group, so it follows rolls) plus an editable HTML
@@ -19,6 +26,10 @@ interface Live {
 export class AnnotationLayer {
   private items: Live[] = [];
   private saveTimer: number | null = null;
+  private visible = true;
+  private opacity = 1;
+  /** Fired when annotations are added/removed/edited (drives the list panel). */
+  onChange: (() => void) | null = null;
 
   constructor(
     private controller: ViewerController,
@@ -30,6 +41,7 @@ export class AnnotationLayer {
   async load(): Promise<void> {
     const list = await this.store.get(this.path);
     for (const d of list) this.spawn(d);
+    this.onChange?.();
   }
 
   /** Called when the user clicks a model point in annotate mode. */
@@ -45,6 +57,62 @@ export class AnnotationLayer {
     const live = this.spawn(d);
     live.textEl.focus();
     this.scheduleSave();
+    this.onChange?.();
+  }
+
+  // --- List panel API ------------------------------------------------------
+
+  getItems(): AnnotationItem[] {
+    return this.items.map((i) => ({
+      id: i.data.id,
+      text: i.data.text,
+      part: i.data.part ?? "",
+    }));
+  }
+
+  /** Pan the camera to an annotation and flash its label. */
+  focus(id: string): void {
+    const live = this.items.find((i) => i.data.id === id);
+    if (!live) return;
+    this.controller.lookAtPoint(live.pin.getWorldPosition(new THREE.Vector3()));
+    live.label.el.addClass("is-flash");
+    window.setTimeout(() => live.label.el.removeClass("is-flash"), 900);
+  }
+
+  removeById(id: string): void {
+    const live = this.items.find((i) => i.data.id === id);
+    if (live) this.remove(live);
+  }
+
+  setVisible(v: boolean): void {
+    this.visible = v;
+    for (const live of this.items) this.applyVisual(live);
+  }
+
+  isVisible(): boolean {
+    return this.visible;
+  }
+
+  setOpacity(o: number): void {
+    this.opacity = o;
+    for (const live of this.items) this.applyVisual(live);
+  }
+
+  getOpacity(): number {
+    return this.opacity;
+  }
+
+  // --- Internals -----------------------------------------------------------
+
+  private applyVisual(live: Live): void {
+    live.pin.visible = this.visible;
+    const mat = (live.pin as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    if (mat) {
+      mat.transparent = this.opacity < 1;
+      mat.opacity = this.opacity;
+    }
+    live.label.el.toggleClass("is-hidden", !this.visible);
+    live.label.el.style.opacity = String(this.opacity);
   }
 
   private spawn(d: StoredAnnotation): Live {
@@ -75,6 +143,7 @@ export class AnnotationLayer {
     textEl.addEventListener("input", () => {
       d.text = textEl.textContent ?? "";
       this.scheduleSave();
+      this.onChange?.();
     });
     // Don't let editing gestures reach the canvas (orbit / new annotation).
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -84,6 +153,7 @@ export class AnnotationLayer {
     });
 
     this.items.push(live);
+    this.applyVisual(live);
     return live;
   }
 
@@ -93,6 +163,7 @@ export class AnnotationLayer {
     const i = this.items.indexOf(live);
     if (i >= 0) this.items.splice(i, 1);
     this.scheduleSave();
+    this.onChange?.();
   }
 
   private scheduleSave(): void {

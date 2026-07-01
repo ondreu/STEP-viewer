@@ -153,6 +153,91 @@
   background-color: var(--background-modifier-hover);
 }
 
+.step-viewer-annot.is-hidden {
+  display: none;
+}
+
+.step-viewer-annot.is-flash {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* --- Annotations list panel --- */
+.step-viewer-annots {
+  display: flex;
+  flex-direction: column;
+  max-height: 45vh;
+  width: 240px;
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+}
+
+.step-viewer-annots-header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2) var(--size-2-1) var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-annots-header .step-viewer-tree-title {
+  margin-right: auto;
+}
+
+.step-viewer-annots-opacity {
+  width: 70px;
+}
+
+.step-viewer-annots-body {
+  overflow: auto;
+  padding: var(--size-2-1) 0;
+}
+
+.step-viewer-annots-empty {
+  padding: var(--size-2-2) var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.step-viewer-annots-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1) var(--size-2-2) var(--size-2-1) var(--size-4-2);
+}
+
+.step-viewer-annots-row:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.step-viewer-annots-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.step-viewer-annots-text {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-viewer-annots-part {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-viewer-annots-del {
+  flex: 0 0 auto;
+}
+
 /* --- Note embeds --- */
 .step-viewer-embed-host {
   position: relative;
@@ -211,19 +296,27 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Structure tree panel --- */
-.step-viewer-tree {
+/* --- Left rail: stacked side panels (tree, annotations) --- */
+.step-viewer-left {
   position: absolute;
   top: var(--size-4-2);
   left: var(--size-4-2);
   display: flex;
   flex-direction: column;
+  gap: var(--size-4-2);
   max-height: calc(100% - var(--size-4-4));
+  z-index: 10;
+}
+
+/* --- Structure tree panel --- */
+.step-viewer-tree {
+  display: flex;
+  flex-direction: column;
+  max-height: 45vh;
   width: 240px;
   border-radius: var(--radius-m);
   background-color: var(--background-secondary);
   box-shadow: var(--shadow-s);
-  z-index: 10;
   overflow: hidden;
 }
 

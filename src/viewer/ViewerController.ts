@@ -188,6 +188,14 @@ export class ViewerController {
     fitCameraToObject(this.camera, this.controls, object);
   }
 
+  /** Pan the camera so `worldPoint` is centred, keeping the current zoom. */
+  lookAtPoint(worldPoint: THREE.Vector3): void {
+    const delta = worldPoint.clone().sub(this.controls.target);
+    this.controls.target.add(delta);
+    this.camera.position.add(delta);
+    this.controls.update();
+  }
+
   getCamera(): THREE.PerspectiveCamera {
     return this.camera;
   }

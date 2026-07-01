@@ -5,6 +5,9 @@ export interface ToolbarOptions {
   /** Toggle the structure-tree panel; returns the new open state. */
   onToggleTree: () => boolean;
   treeInitiallyOpen: boolean;
+  /** Toggle the annotations list panel; returns the new open state. */
+  onToggleAnnotations: () => boolean;
+  annotationsInitiallyOpen: boolean;
 }
 
 /**
@@ -20,6 +23,7 @@ export function createToolbar(
 ): HTMLElement {
   const bar = host.createDiv({ cls: "step-viewer-toolbar" });
   let treeOpen = opts.treeInitiallyOpen;
+  let annotsOpen = opts.annotationsInitiallyOpen;
 
   const wire = iconButton(bar, "grid", "Toggle wireframe", () => {
     controller.toggleWireframe();
@@ -45,6 +49,10 @@ export function createToolbar(
     controller.toggleAnnotate();
     sync();
   });
+  const annots = iconButton(bar, "messages-square", "Toggle annotations list", () => {
+    annotsOpen = opts.onToggleAnnotations();
+    sync();
+  });
   const tree = iconButton(bar, "list-tree", "Toggle structure tree", () => {
     treeOpen = opts.onToggleTree();
     sync();
@@ -63,6 +71,7 @@ export function createToolbar(
     measure.toggleClass("is-active", controller.isMeasuring());
     snap.toggleClass("is-active", controller.isSnapping());
     annotate.toggleClass("is-active", controller.isAnnotating());
+    annots.toggleClass("is-active", annotsOpen);
     tree.toggleClass("is-active", treeOpen);
   }
   sync();

@@ -8,6 +8,7 @@ import { PartInfoPanel } from "../ui/PartInfoPanel";
 import { ViewCube } from "../ui/ViewCube";
 import { LabelLayer, LabelHandle } from "../ui/LabelLayer";
 import { AnnotationLayer } from "../ui/AnnotationLayer";
+import { createAnnotationsPanel } from "../ui/AnnotationsPanel";
 import { AnnotationStore } from "../annotations/AnnotationStore";
 
 export interface MountOptions {
@@ -64,8 +65,11 @@ export function mountViewer(
     });
   };
 
+  // Left rail stacks the collapsible side panels (tree, annotations).
+  const leftRail = host.createDiv({ cls: "step-viewer-left" });
+
   // Structure-tree panel, hidden until toggled.
-  const treePanel = createTreePanel(host, tree, controller);
+  const treePanel = createTreePanel(leftRail, tree, controller);
   treePanel.el.toggle(false);
 
   // Part-info panel (bottom-right), driven by hover; also syncs the tree.
@@ -83,6 +87,11 @@ export function mountViewer(
     opts.filePath,
   );
   controller.onAnnotate = ({ local, part }) => annotations.addAt(local, part);
+
+  // Annotations list panel (hidden until toggled), kept in sync with the layer.
+  const annotsPanel = createAnnotationsPanel(leftRail, annotations);
+  annotsPanel.el.toggle(false);
+  annotations.onChange = () => annotsPanel.render();
   void annotations.load();
 
   // Right-side rail: view cube, roll arrows, toolbar.
@@ -107,6 +116,12 @@ export function mountViewer(
     onToggleTree: () => {
       const open = !treePanel.el.isShown();
       treePanel.el.toggle(open);
+      return open;
+    },
+    annotationsInitiallyOpen: false,
+    onToggleAnnotations: () => {
+      const open = !annotsPanel.el.isShown();
+      annotsPanel.el.toggle(open);
       return open;
     },
   });

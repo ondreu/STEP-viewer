@@ -28,7 +28,10 @@ Built to the specification in
   on-screen size as you zoom.
 - **Annotations** — annotate mode: click a point to pin an editable note to the
   model (obeys the snap toggle). Notes follow the part (and rolls), and are
-  saved per file, so they also appear in note embeds of the same model.
+  saved per file, so they also appear in note embeds of the same model. An
+  **annotations list panel** shows each note's text and the part it's attached
+  to (click a row to fly to it), with a **show/hide toggle** and an **opacity
+  slider** for the annotations.
 - **Structure tree** panel — the STEP assembly hierarchy, with per-part
   visibility toggles and click-to-frame.
 - **Navigation cube** (top-right) — a ViewCube that tracks the camera; click a
