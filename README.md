@@ -29,21 +29,47 @@ list and rationale.
 > The viewer works on a tessellated mesh, not exact B-rep geometry. It is for
 > visualization only.
 
+## Install with BRAT (recommended)
+
+This plugin isn't in the community store yet. To install the beta with
+[BRAT](https://github.com/TfTHacker/obsidian42-brat):
+
+1. Install and enable **BRAT** from the community plugins.
+2. BRAT → *Add beta plugin* → enter this repository (`ondreu/step-viewer`).
+3. Enable **STEP Viewer** in Community plugins.
+
+BRAT installs `main.js`, `manifest.json`, and `styles.css` from the latest
+GitHub release. The `occt-import-js` WASM is **inlined into `main.js`**, so the
+plugin is self-contained — no extra files to copy (design doc §6.1).
+
 ## Build
 
 ```bash
 npm install
-npm run build     # type-checks, bundles main.js, copies occt-import-js.wasm
+npm run build     # type-checks and bundles a self-contained main.js
 ```
 
-`npm run dev` runs esbuild in watch mode. Both write `main.js` and copy
-`occt-import-js.wasm` next to it — the loader reads the WASM from the plugin
-directory via the vault adapter at runtime (design doc §6.1).
+`npm run dev` runs esbuild in watch mode. The build inlines
+`occt-import-js.wasm` into `main.js` (esbuild binary loader), so no separate
+WASM file ships. Releases are produced by `.github/workflows/release.yml` on
+tag push.
 
-### Installing into a vault
+### Manual install
 
-Copy `main.js`, `manifest.json`, `styles.css`, and `occt-import-js.wasm` into
+Copy `main.js`, `manifest.json`, and `styles.css` into
 `<vault>/.obsidian/plugins/step-viewer/`, then enable the plugin.
+
+### Cutting a release
+
+Bump the version in `manifest.json` (and `package.json` / `versions.json`),
+then push a matching tag:
+
+```bash
+git tag 0.1.0 && git push origin 0.1.0
+```
+
+The workflow builds and publishes a GitHub release with the three assets BRAT
+needs.
 
 ## Architecture
 

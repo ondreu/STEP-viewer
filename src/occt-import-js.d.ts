@@ -66,3 +66,9 @@ declare module "occt-import-js" {
   const factory: (overrides?: OcctModuleOverrides) => Promise<OcctModule>;
   export default factory;
 }
+
+// esbuild's binary loader turns `import x from "….wasm"` into a Uint8Array.
+declare module "*.wasm" {
+  const data: Uint8Array;
+  export default data;
+}

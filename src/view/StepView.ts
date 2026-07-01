@@ -1,4 +1,4 @@
-import { FileView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { FileView, TFile, WorkspaceLeaf } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { stepToThree } from "../viewer/StepToThree";
@@ -21,10 +21,7 @@ export class StepView extends FileView {
   private controller: ViewerController | null = null;
   private loadToken = 0;
 
-  constructor(
-    leaf: WorkspaceLeaf,
-    private plugin: Plugin,
-  ) {
+  constructor(leaf: WorkspaceLeaf) {
     super(leaf);
     this.navigation = true;
   }
@@ -58,7 +55,7 @@ export class StepView extends FileView {
       if (token !== this.loadToken) return; // superseded by a newer load
 
       const bytes = new Uint8Array(buffer);
-      const occt = await OcctLoader.get(this.plugin); // lazy WASM init
+      const occt = await OcctLoader.get(); // lazy WASM init
       if (token !== this.loadToken) return;
 
       const result = occt.ReadStepFile(bytes, DEFAULT_PARAMS);

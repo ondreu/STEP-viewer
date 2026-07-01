@@ -11,7 +11,7 @@ import { STEP_VIEW_TYPE, StepView } from "./view/StepView";
  */
 export default class StepViewerPlugin extends Plugin {
   async onload(): Promise<void> {
-    this.registerView(STEP_VIEW_TYPE, (leaf) => new StepView(leaf, this));
+    this.registerView(STEP_VIEW_TYPE, (leaf) => new StepView(leaf));
     this.registerExtensions(["step", "stp"], STEP_VIEW_TYPE);
   }
 
