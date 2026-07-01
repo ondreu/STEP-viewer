@@ -37,7 +37,7 @@ export function createToolbar(
     controller.toggleMeasure();
     sync();
   });
-  const snap = iconButton(bar, "magnet", "Snap measurement to corners / edges", () => {
+  const snap = iconButton(bar, "magnet", "Snap measurement & annotations to corners / edges", () => {
     controller.toggleSnap();
     sync();
   });

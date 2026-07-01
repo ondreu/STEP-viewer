@@ -341,6 +341,7 @@ export class ViewerController {
     if (on && this.measureEnabled) this.toggleMeasure();
     this.host.toggleClass("is-annotating", on);
     if (on) this.setHover(null);
+    else this.setPreview(null, false);
   }
 
   /** Snap measurement picks to the nearest visible corner/edge. */
@@ -413,7 +414,7 @@ export class ViewerController {
   };
 
   private onPointerLeave = (): void => {
-    if (this.measureEnabled) this.setPreview(null, false);
+    if (this.measureEnabled || this.annotateEnabled) this.setPreview(null, false);
     else this.setHover(null);
     this.hoverPending = false;
   };
@@ -501,11 +502,11 @@ export class ViewerController {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = this.raycaster.intersectObjects(this.pickables, false)[0];
-    if (!hit || !this.model) return;
-    const local = this.model.worldToLocal(hit.point.clone());
-    this.onAnnotate?.({ local, part: hit.object.name });
+    // Reuse the measurement resolver so the snap toggle applies here too.
+    const resolved = this.raycastResolve(ndc);
+    if (!resolved || !this.model) return;
+    const local = this.model.worldToLocal(resolved.point.clone());
+    this.onAnnotate?.({ local, part: resolved.object.name });
   }
 
   private pickMeasurePoint(e: PointerEvent): void {
@@ -555,20 +556,21 @@ export class ViewerController {
   /** Raycast at `ndc` and resolve the hit to a (possibly snapped) point. */
   private raycastResolve(
     ndc: THREE.Vector2,
-  ): { point: THREE.Vector3; snapped: boolean } | null {
+  ): { point: THREE.Vector3; snapped: boolean; object: THREE.Object3D } | null {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hits = this.raycaster.intersectObjects(this.pickables, false);
     if (hits.length === 0) return null;
+    const object = hits[0].object;
     let point = hits[0].point.clone();
     let snapped = false;
     if (this.snapEnabled) {
-      const s = this.snapPoint(hits[0].object as THREE.Mesh, point);
+      const s = this.snapPoint(object as THREE.Mesh, point);
       if (s) {
         point = s;
         snapped = true;
       }
     }
-    return { point, snapped };
+    return { point, snapped, object };
   }
 
   /**
@@ -733,8 +735,8 @@ export class ViewerController {
     // In measure mode it drives the snap preview; otherwise the hover highlight.
     if (this.hoverPending && !this.dragging) {
       this.hoverPending = false;
-      if (this.measureEnabled) this.updateMeasurePreview();
-      else if (!this.annotateEnabled) this.processHover();
+      if (this.measureEnabled || this.annotateEnabled) this.updateMeasurePreview();
+      else this.processHover();
     }
     this.rescalePreview();
     this.renderer.render(this.scene, this.camera);
