@@ -53,6 +53,100 @@
   background-color: var(--background-modifier-active-hover);
 }
 
+/* --- Measurement --- */
+.step-viewer-host.is-measuring .step-viewer-canvas {
+  cursor: crosshair;
+}
+
+.step-viewer-measure-readout {
+  position: absolute;
+  left: var(--size-4-2);
+  bottom: var(--size-4-2);
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* --- Structure tree panel --- */
+.step-viewer-tree {
+  position: absolute;
+  top: var(--size-4-2);
+  left: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - var(--size-4-4));
+  width: 240px;
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  z-index: 10;
+  overflow: hidden;
+}
+
+.step-viewer-tree-header {
+  padding: var(--size-2-2) var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-tree-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.step-viewer-tree-body {
+  overflow: auto;
+  padding: var(--size-2-1) 0;
+}
+
+.step-viewer-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  padding: 1px var(--size-4-2) 1px 0;
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+}
+
+.step-viewer-tree-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.step-viewer-tree-caret:empty {
+  cursor: default;
+}
+
+.step-viewer-tree-check {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.step-viewer-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.step-viewer-tree-label:hover {
+  color: var(--text-accent);
+}
+
 /* --- Overlays (loading / empty / error) --- */
 .step-viewer-overlay {
   position: absolute;

@@ -15,16 +15,25 @@ Built to the specification in
 - Renders with `three.js`, orbit camera, auto-fit on load.
 - Per-face colors from the model when present, default material otherwise.
 - Edge display for geometry readability.
-- Toolbar: reset camera, toggle wireframe, toggle edges.
+- **Transparency** toggle to see internal geometry.
+- **Distance measurement** — click two points on the model to read the
+  straight-line distance. Marked **approximate** (see note below).
+- **Structure tree** panel — the STEP assembly hierarchy, with per-part
+  visibility toggles and click-to-frame.
+- Toolbar: reset camera, wireframe, edges, transparency, measure, structure tree.
 - Themed background and clean loading / empty / error states.
 - Careful resource cleanup (geometry, materials, WebGL context) on close.
 
-## Not in scope (MVP)
+> **Measurement is approximate.** It runs against the tessellated mesh, not the
+> exact B-rep geometry, so readings are close to — but not exactly — the true
+> CAD dimensions. The readout is labelled `(approx.)` accordingly (design doc
+> §1).
 
-Measurement, STEP editing/creation, exact B-rep geometry, annotations,
-sections, exploded views, animation, and full mobile support. This plugin
-targets **desktop** (`isDesktopOnly: true`). See design doc §1 for the full
-list and rationale.
+## Not in scope
+
+STEP editing/creation, exact B-rep geometry, annotations, section views,
+exploded views, animation, and full mobile support. This plugin targets
+**desktop** (`isDesktopOnly: true`). See design doc §1 for the rationale.
 
 > The viewer works on a tessellated mesh, not exact B-rep geometry. It is for
 > visualization only.

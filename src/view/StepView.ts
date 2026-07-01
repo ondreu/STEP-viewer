@@ -4,6 +4,7 @@ import { DEFAULT_PARAMS } from "../viewer/params";
 import { stepToThree } from "../viewer/StepToThree";
 import { ViewerController } from "../viewer/ViewerController";
 import { createToolbar } from "../ui/Toolbar";
+import { createTreePanel } from "../ui/TreePanel";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -71,12 +72,38 @@ export class StepView extends FileView {
         return;
       }
 
-      const group = stepToThree(result);
+      const { group, tree } = stepToThree(result);
       loadingEl.remove();
 
-      this.controller = new ViewerController(host);
-      this.controller.setModel(group);
-      createToolbar(host, this.controller);
+      const controller = new ViewerController(host);
+      this.controller = controller;
+      controller.setModel(group);
+
+      // Measurement readout (bottom-left). Shown while measuring.
+      const readout = host.createDiv({ cls: "step-viewer-measure-readout" });
+      readout.hide();
+      controller.onMeasureUpdate = (text) => {
+        if (text == null) {
+          readout.setText("");
+          readout.hide();
+        } else {
+          readout.setText(text);
+          readout.show();
+        }
+      };
+
+      // Structure-tree panel, hidden until toggled from the toolbar.
+      const treePanel = createTreePanel(host, tree, controller);
+      treePanel.toggle(false);
+
+      createToolbar(host, controller, {
+        treeInitiallyOpen: false,
+        onToggleTree: () => {
+          const open = !treePanel.isShown();
+          treePanel.toggle(open);
+          return open;
+        },
+      });
     } catch (err) {
       if (token !== this.loadToken) return;
       loadingEl.remove();
