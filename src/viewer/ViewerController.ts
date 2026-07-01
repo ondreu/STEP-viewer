@@ -11,6 +11,8 @@ const ANNOT_COLOR = 0xffc531;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
 const CLICK_MOVE_THRESHOLD = 5;
+// Fingers wander more than a mouse, so allow a larger slop for touch taps.
+const TOUCH_MOVE_THRESHOLD = 12;
 const ROLL_DURATION = 0.28; // seconds
 
 /** Details of the part currently under the cursor, for the info panel + tree. */
@@ -497,12 +499,27 @@ export class ViewerController {
   private onPointerUp = (e: PointerEvent): void => {
     this.dragging = false;
     if (e.button !== 0) return;
-    if (!this.measureEnabled && !this.annotateEnabled) return;
+    const threshold =
+      e.pointerType === "touch" ? TOUCH_MOVE_THRESHOLD : CLICK_MOVE_THRESHOLD;
     const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
-    if (moved > CLICK_MOVE_THRESHOLD) return; // it was an orbit drag, not a pick
+    if (moved > threshold) return; // it was an orbit drag, not a tap
     if (this.measureEnabled) this.pickMeasurePoint(e);
-    else this.pickAnnotate(e);
+    else if (this.annotateEnabled) this.pickAnnotate(e);
+    // Touch has no hover, so a plain tap inspects the part under the finger
+    // (drives the same part-info panel the mouse shows on hover).
+    else if (e.pointerType === "touch") this.pickInspect(e);
   };
+
+  private pickInspect(e: PointerEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.pickables, false);
+    this.setHover((hits[0]?.object as THREE.Mesh) ?? null);
+  }
 
   private pickAnnotate(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();

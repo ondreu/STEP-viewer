@@ -12,9 +12,11 @@ Parsing is done with [`occt-import-js`](https://www.npmjs.com/package/occt-impor
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/B7K822EW68)
 
-> **Desktop only.** The plugin targets desktop (`isDesktopOnly: true`). On
-> mobile the WASM parser can run out of memory on larger models; that is out of
-> scope for now (design doc §2.4).
+> **Mobile support (beta).** The plugin also runs on Obsidian mobile: the
+> layout adapts to small touchscreens and orbit / pan / pinch-zoom work with
+> touch (tap a part to see its info). Because the WASM parser can run out of
+> memory on large models in the mobile webview, opening a large file first
+> shows a warning you can dismiss to continue (design doc §2.4).
 
 ## Install
 

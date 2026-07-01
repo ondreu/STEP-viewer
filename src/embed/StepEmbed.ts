@@ -2,6 +2,7 @@ import { MarkdownRenderChild, Plugin, TFile } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
+import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 
 const DEFAULT_HEIGHT = 400;
 
@@ -27,6 +28,8 @@ export class StepEmbed extends MarkdownRenderChild {
   private linktext = "";
   private wantMounted = false;
   private busy = false;
+  /** Set when the user opts past the mobile large-model warning. */
+  private forceLarge = false;
 
   constructor(
     containerEl: HTMLElement,
@@ -84,6 +87,12 @@ export class StepEmbed extends MarkdownRenderChild {
       const file = this.resolveFile(this.linktext);
       if (!file) throw new Error(`STEP file not found: ${this.linktext}`);
 
+      // On mobile, warn before parsing a large model (memory) unless opted in.
+      if (!this.forceLarge && shouldWarnLargeModel(file.stat.size)) {
+        this.largeWarning(file.stat.size);
+        return;
+      }
+
       this.host.empty();
       const loading = this.host.createDiv({
         cls: "step-viewer-overlay step-viewer-loading",
@@ -135,6 +144,23 @@ export class StepEmbed extends MarkdownRenderChild {
     el.createEl("div", {
       text: "STEP preview",
       cls: "step-viewer-message-sub",
+    });
+  }
+
+  private largeWarning(sizeBytes: number): void {
+    this.host.empty();
+    const el = this.host.createDiv({
+      cls: "step-viewer-overlay step-viewer-empty",
+    });
+    el.createEl("div", { text: this.linktext, cls: "step-viewer-message" });
+    el.createEl("div", {
+      text: `${formatFileSize(sizeBytes)} — large models may run out of memory on mobile.`,
+      cls: "step-viewer-message-sub",
+    });
+    const btn = el.createEl("button", { text: "Open anyway", cls: "mod-cta" });
+    btn.addEventListener("click", () => {
+      this.forceLarge = true;
+      void this.ensure();
     });
   }
 

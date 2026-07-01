@@ -2,6 +2,7 @@ import { FileView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
+import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -48,6 +49,22 @@ export class StepView extends FileView {
     container.addClass("step-viewer-content");
 
     const host = container.createDiv({ cls: "step-viewer-host" });
+
+    // On mobile, large models risk exhausting the WASM parser's memory, so we
+    // confirm before attempting the parse instead of risking a hard failure.
+    if (shouldWarnLargeModel(file.stat.size)) {
+      this.showLargeWarning(host, file.stat.size, () => {
+        if (token !== this.loadToken) return;
+        host.empty();
+        void this.parseAndMount(file, host, token);
+      });
+      return;
+    }
+
+    await this.parseAndMount(file, host, token);
+  }
+
+  private async parseAndMount(file: TFile, host: HTMLElement, token: number): Promise<void> {
     const loadingEl = this.showLoading(host);
 
     try {
@@ -110,6 +127,21 @@ export class StepView extends FileView {
       text: "This file contains no displayable geometry.",
       cls: "step-viewer-message",
     });
+  }
+
+  private showLargeWarning(
+    host: HTMLElement,
+    sizeBytes: number,
+    onProceed: () => void,
+  ): void {
+    const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-empty" });
+    el.createEl("div", { text: "Large model", cls: "step-viewer-message" });
+    el.createEl("div", {
+      text: `This file is ${formatFileSize(sizeBytes)}. On mobile, opening large models can run the viewer out of memory. Open anyway?`,
+      cls: "step-viewer-message-sub",
+    });
+    const btn = el.createEl("button", { text: "Open anyway", cls: "mod-cta" });
+    btn.addEventListener("click", onProceed);
   }
 
   private showError(host: HTMLElement, file: TFile, err: unknown): void {

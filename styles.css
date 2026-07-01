@@ -404,6 +404,12 @@
   pointer-events: none;
 }
 
+/* Overlays are click-through, but interactive controls inside them (e.g. the
+   mobile "Open anyway" button) must still receive taps. */
+.step-viewer-overlay button {
+  pointer-events: auto;
+}
+
 .step-viewer-message {
   color: var(--text-normal);
   font-size: var(--font-ui-medium);
@@ -433,4 +439,31 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* --- Mobile layout ---------------------------------------------------------
+   Scoped to Obsidian's body.is-mobile so the desktop layout is untouched.
+   Shrinks the fixed-size overlays and enlarges tap targets so the viewer is
+   usable on a narrow touchscreen. */
+body.is-mobile .step-viewer-viewcube {
+  width: 64px;
+  height: 64px;
+}
+
+/* Fixed-width side panels must never exceed the viewport on a narrow screen. */
+body.is-mobile .step-viewer-tree,
+body.is-mobile .step-viewer-annots {
+  width: min(240px, calc(100vw - var(--size-4-8)));
+}
+
+/* Comfortable tap targets for the toolbar / roll / view-cube buttons. */
+body.is-mobile .step-viewer-btn {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* Keep the corner readouts within the viewport width. */
+body.is-mobile .step-viewer-info,
+body.is-mobile .step-viewer-measure-readout {
+  max-width: calc(100vw - var(--size-4-8));
 }

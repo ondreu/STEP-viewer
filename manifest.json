@@ -6,5 +6,5 @@
   "description": "Open and view STEP (.step/.stp) CAD models in an interactive 3D viewer.",
   "author": "Ondřej Uhnávy",
   "authorUrl": "https://github.com/ondreu",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }
