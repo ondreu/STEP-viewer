@@ -6,6 +6,7 @@ import { ViewerController } from "../viewer/ViewerController";
 import { createToolbar } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
 import { PartInfoPanel } from "../ui/PartInfoPanel";
+import { ViewCube } from "../ui/ViewCube";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -103,6 +104,20 @@ export class StepView extends FileView {
         info.update(part);
         treePanel.reveal(part?.object ?? null);
       };
+
+      // Navigation cube (top-right) — click a face to snap to a standard view.
+      const cube = new ViewCube(host, {
+        getOrientation: () => {
+          const cam = controller.getCamera();
+          return {
+            dir: cam.position.clone().sub(controller.getTarget()).normalize(),
+            up: cam.up.clone(),
+          };
+        },
+        onSelect: (dir) => controller.setViewDirection(dir),
+      });
+      controller.registerDisposable(cube);
+      controller.onFrame = () => cube.update();
 
       createToolbar(host, controller, {
         treeInitiallyOpen: false,

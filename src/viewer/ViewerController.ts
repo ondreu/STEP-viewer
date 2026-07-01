@@ -59,6 +59,11 @@ export class ViewerController {
   /** Called with the hovered part, or null when nothing is under the cursor. */
   onHover: ((info: PartInfo | null) => void) | null = null;
 
+  /** Called once per frame after rendering (used to drive the view cube). */
+  onFrame: (() => void) | null = null;
+  /** Extra resources (e.g. the view cube) torn down with this controller. */
+  private disposables: Array<{ dispose(): void }> = [];
+
   // Measurement state (design doc §1: results are approximate — mesh, not B-rep).
   private measureEnabled = false;
   private snapEnabled = false;
@@ -146,6 +151,37 @@ export class ViewerController {
   /** Frame a specific object (used when a structure-tree node is clicked). */
   focusObject(object: THREE.Object3D): void {
     fitCameraToObject(this.camera, this.controls, object);
+  }
+
+  getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
+  getTarget(): THREE.Vector3 {
+    return this.controls.target.clone();
+  }
+
+  /** Register a resource to dispose when this controller is disposed. */
+  registerDisposable(d: { dispose(): void }): void {
+    this.disposables.push(d);
+  }
+
+  /**
+   * Snap the camera to look along `dir` (from the target towards the camera),
+   * keeping the current distance. Used by the view cube's standard views.
+   */
+  setViewDirection(dir: THREE.Vector3): void {
+    const target = this.controls.target;
+    const dist = this.camera.position.distanceTo(target) || 1;
+    // Avoid a degenerate up vector when looking straight down/up.
+    const up =
+      Math.abs(dir.y) > 0.99
+        ? new THREE.Vector3(0, 0, 1)
+        : new THREE.Vector3(0, 1, 0);
+    this.camera.up.copy(up);
+    this.camera.position.copy(target).addScaledVector(dir, dist);
+    this.camera.lookAt(target);
+    this.controls.update();
   }
 
   toggleWireframe(): boolean {
@@ -458,6 +494,7 @@ export class ViewerController {
       this.processHover();
     }
     this.renderer.render(this.scene, this.camera);
+    this.onFrame?.();
   };
 
   dispose(): void {
@@ -473,6 +510,9 @@ export class ViewerController {
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointerleave", this.onPointerLeave);
+
+    for (const d of this.disposables) d.dispose();
+    this.disposables = [];
 
     this.hoverSaved = [];
     this.hovered = null;

@@ -21,9 +21,20 @@
 }
 
 /* --- Toolbar overlay --- */
-.step-viewer-toolbar {
+/* View cube overlay (top-right); the toolbar stacks below it. */
+.step-viewer-viewcube {
   position: absolute;
   top: var(--size-4-2);
+  right: var(--size-4-2);
+  width: 96px;
+  height: 96px;
+  z-index: 10;
+  cursor: pointer;
+}
+
+.step-viewer-toolbar {
+  position: absolute;
+  top: calc(96px + 2 * var(--size-4-2));
   right: var(--size-4-2);
   display: flex;
   flex-direction: column;

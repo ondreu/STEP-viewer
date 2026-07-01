@@ -25,6 +25,8 @@ Built to the specification in
   the nearest visible vertex or edge.
 - **Structure tree** panel — the STEP assembly hierarchy, with per-part
   visibility toggles and click-to-frame.
+- **Navigation cube** (top-right) — a ViewCube that tracks the camera; click a
+  face to snap to a standard view (front / back / top / bottom / left / right).
 - Toolbar: reset camera, wireframe, edges, transparency, measure, snap,
   structure tree.
 - Themed background and clean loading / empty / error states.
