@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (defaults to the version in manifest.json)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -25,14 +31,27 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${{ github.ref_name }}"
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="$(node -p "require('./manifest.json').version")"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}
         run: |
           # main.js is self-contained (WASM inlined), so BRAT's three required
           # assets — main.js, manifest.json, styles.css — are all we ship.
-          gh release create "$tag" \
-            --title="$tag" \
-            --notes="Release $tag" \
+          # On workflow_dispatch gh creates the tag at the checked-out commit.
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --notes "Release ${{ steps.meta.outputs.tag }}" \
             main.js manifest.json styles.css
