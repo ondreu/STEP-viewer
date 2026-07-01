@@ -19,19 +19,37 @@ Built to the specification in
 - **Hover highlight** — the part under the cursor is highlighted, its details
   (name, bounding-box dimensions, triangle count) shown in an info panel, and
   the matching node is revealed in the structure tree.
-- **Distance measurement** — click two points on the model to read the
-  straight-line distance **plus the per-axis X / Y / Z components** (shown both
-  in the readout and as coloured axis legs). Marked **approximate** (see note).
-- **Snap to corners / edges** — optional toggle that snaps measurement picks to
-  the nearest visible vertex or edge, with a **live preview marker** (green when
-  snapping, orange when free) so you can see where a click will land.
+- **Distance measurement** — click two points to read the straight-line
+  distance **plus per-axis X / Y / Z components**, shown in the readout, as
+  coloured axis legs, and as **numbers beside each line**. Marked approximate.
+- **Snap to corners / edges** — snaps picks to the nearest visible vertex/edge,
+  with a **live preview marker** (green when snapping, orange when free) that
+  keeps a constant on-screen size as you zoom.
+- **Annotations** — annotate mode: click a point to pin an editable note to the
+  model. Notes follow the part (and rolls), and are saved per file, so they also
+  appear in note embeds of the same model.
 - **Structure tree** panel — the STEP assembly hierarchy, with per-part
   visibility toggles and click-to-frame.
 - **Navigation cube** (top-right) — a ViewCube that tracks the camera; click a
-  face to snap to a standard view (front / back / top / bottom / left / right),
-  with **↶ / ↷ roll arrows** to rotate the view 90°.
-- Toolbar: fit camera, wireframe, edges, transparency, measure, snap,
+  face to snap to a standard view, with **↶ / ↷ arrows** that animate a 90° roll.
+- **Note embeds** — drop a `step` code block into any note to render the model
+  inline (lazy-loaded when scrolled into view; see below).
+- Toolbar: fit, wireframe, edges, transparency, measure, snap, annotate,
   structure tree.
+
+### Embedding a model in a note
+
+````markdown
+```step
+path: Models/bracket.step
+height: 320
+```
+````
+
+`path` accepts a wikilink target (`[[bracket.step]]`) or a vault-relative path;
+`height` is optional (pixels). Each embed mounts its own viewer when it scrolls
+into view and is disposed when it scrolls away, so many embeds on one page don't
+exhaust WebGL contexts.
 - Themed background and clean loading / empty / error states.
 - Careful resource cleanup (geometry, materials, WebGL context) on close.
 

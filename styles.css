@@ -76,9 +76,95 @@
   background-color: var(--background-modifier-active-hover);
 }
 
-/* --- Measurement --- */
-.step-viewer-host.is-measuring .step-viewer-canvas {
+/* --- Measurement / annotate cursor --- */
+.step-viewer-host.is-measuring .step-viewer-canvas,
+.step-viewer-host.is-annotating .step-viewer-canvas {
   cursor: crosshair;
+}
+
+/* --- Projected HTML labels (measurement numbers + annotations) --- */
+.step-viewer-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.step-viewer-labels > * {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.step-viewer-mlabel {
+  padding: 1px 6px;
+  border-radius: var(--radius-s);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.step-viewer-annot {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-2-1);
+  max-width: 200px;
+  padding: var(--size-2-1) var(--size-2-2);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  pointer-events: auto;
+}
+
+.step-viewer-annot-text {
+  min-width: 60px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.step-viewer-annot-text:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+}
+
+.step-viewer-annot-del {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.step-viewer-annot-del:hover {
+  color: var(--text-error);
+  background-color: var(--background-modifier-hover);
+}
+
+/* --- Note embeds --- */
+.step-viewer-embed-host {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-primary);
+}
+
+.step-viewer-embed-placeholder {
+  gap: var(--size-2-2);
 }
 
 .step-viewer-measure-readout {

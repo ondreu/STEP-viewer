@@ -7,9 +7,11 @@ const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
 const HIGHLIGHT_COLOR = 0xff8a00;
 const SNAP_COLOR = 0x22cc66;
+const ANNOT_COLOR = 0xffc531;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
 const CLICK_MOVE_THRESHOLD = 5;
+const ROLL_DURATION = 0.28; // seconds
 
 /** Details of the part currently under the cursor, for the info panel + tree. */
 export interface PartInfo {
@@ -17,6 +19,19 @@ export interface PartInfo {
   name: string;
   triangles: number;
   size: { x: number; y: number; z: number };
+}
+
+/** A measurement number label to render as an HTML overlay at `pos`. */
+export interface MeasureLabel {
+  pos: THREE.Vector3;
+  text: string;
+  color: number;
+}
+
+/** Where the user clicked in annotate mode. `local` is in model space. */
+export interface AnnotatePick {
+  local: THREE.Vector3;
+  part: string;
 }
 
 /**
@@ -57,10 +72,11 @@ export class ViewerController {
   /** Called with the hovered part, or null when nothing is under the cursor. */
   onHover: ((info: PartInfo | null) => void) | null = null;
 
-  /** Called once per frame after rendering (used to drive the view cube). */
-  onFrame: (() => void) | null = null;
+  /** Called each frame after rendering (drives the view cube + label overlays). */
+  private frameCallbacks: Array<() => void> = [];
   /** Extra resources (e.g. the view cube) torn down with this controller. */
   private disposables: Array<{ dispose(): void }> = [];
+  private clock = new THREE.Clock();
 
   // Measurement state (design doc §1: results are approximate — mesh, not B-rep).
   private measureEnabled = false;
@@ -73,6 +89,23 @@ export class ViewerController {
   private snapThreshold = 1;
   /** Called with the current measurement readout, or null to clear it. */
   onMeasureUpdate: ((text: string | null) => void) | null = null;
+  /** Called with the measurement number labels (empty array to clear them). */
+  onMeasureLabels: ((labels: MeasureLabel[]) => void) | null = null;
+
+  // Annotation pick mode.
+  private annotateEnabled = false;
+  /** Called when the user clicks a point in annotate mode. */
+  onAnnotate: ((pick: AnnotatePick) => void) | null = null;
+
+  // 90° roll animation.
+  private roll = {
+    active: false,
+    t: 0,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    startQuat: new THREE.Quaternion(),
+    endQuat: new THREE.Quaternion(),
+  };
 
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -163,9 +196,50 @@ export class ViewerController {
     return this.controls.target.clone();
   }
 
+  getDomElement(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  getModel(): THREE.Group | null {
+    return this.model;
+  }
+
+  /** World position for a point expressed in model-local space. */
+  localToWorld(local: THREE.Vector3): THREE.Vector3 {
+    return this.model ? this.model.localToWorld(local.clone()) : local.clone();
+  }
+
   /** Register a resource to dispose when this controller is disposed. */
   registerDisposable(d: { dispose(): void }): void {
     this.disposables.push(d);
+  }
+
+  /** Register a per-frame callback (runs after render). */
+  registerFrameCallback(fn: () => void): void {
+    this.frameCallbacks.push(fn);
+  }
+
+  /**
+   * Add a pin marker at a model-local point (child of the model group so it
+   * follows rolls). Returns the object for later removal.
+   */
+  addAnnotationPin(local: THREE.Vector3): THREE.Object3D {
+    const geom = new THREE.SphereGeometry(this.markerRadius, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({ color: ANNOT_COLOR });
+    const pin = new THREE.Mesh(geom, mat);
+    pin.position.copy(local);
+    pin.raycast = () => {};
+    this.model?.add(pin);
+    return pin;
+  }
+
+  removeAnnotationPin(pin: THREE.Object3D): void {
+    pin.parent?.remove(pin);
+    const m = pin as THREE.Mesh;
+    m.geometry?.dispose?.();
+    const mat = m.material;
+    if (Array.isArray(mat)) mat.forEach((x) => x?.dispose?.());
+    else mat?.dispose?.();
   }
 
   /**
@@ -197,14 +271,30 @@ export class ViewerController {
     const pivot = this.controls.target.clone();
     const q = new THREE.Quaternion().setFromAxisAngle(axis, (sign * Math.PI) / 2);
 
-    this.model.position.sub(pivot).applyQuaternion(q).add(pivot);
-    this.model.quaternion.premultiply(q);
-    this.model.updateMatrixWorld(true);
+    // Compute the target transform, then tween to it (animate, don't jump).
+    const endPos = this.model.position.clone().sub(pivot).applyQuaternion(q).add(pivot);
+    const endQuat = q.clone().multiply(this.model.quaternion);
+
+    this.roll.active = true;
+    this.roll.t = 0;
+    this.roll.startPos.copy(this.model.position);
+    this.roll.endPos.copy(endPos);
+    this.roll.startQuat.copy(this.model.quaternion);
+    this.roll.endQuat.copy(endQuat);
 
     // Markers/preview are world-anchored and would drift from the geometry.
     this.setHover(null);
     this.clearMeasurement();
     this.setPreview(null, false);
+  }
+
+  private advanceRoll(dt: number): void {
+    if (!this.roll.active || !this.model) return;
+    this.roll.t = Math.min(this.roll.t + dt / ROLL_DURATION, 1);
+    const e = easeInOut(this.roll.t);
+    this.model.position.lerpVectors(this.roll.startPos, this.roll.endPos, e);
+    this.model.quaternion.copy(this.roll.startQuat).slerp(this.roll.endQuat, e);
+    if (this.roll.t >= 1) this.roll.active = false;
   }
 
   toggleWireframe(): boolean {
@@ -228,6 +318,7 @@ export class ViewerController {
   /** Enable/disable measurement pick mode. Disabling clears the current line. */
   toggleMeasure(): boolean {
     this.measureEnabled = !this.measureEnabled;
+    if (this.measureEnabled && this.annotateEnabled) this.setAnnotate(false);
     this.host.toggleClass("is-measuring", this.measureEnabled);
     if (this.measureEnabled) {
       this.setHover(null); // hover highlight is suppressed while measuring
@@ -237,6 +328,19 @@ export class ViewerController {
       this.setPreview(null, false);
     }
     return this.measureEnabled;
+  }
+
+  /** Enable/disable annotate mode (click a point to pin a note). */
+  toggleAnnotate(): boolean {
+    this.setAnnotate(!this.annotateEnabled);
+    return this.annotateEnabled;
+  }
+
+  private setAnnotate(on: boolean): void {
+    this.annotateEnabled = on;
+    if (on && this.measureEnabled) this.toggleMeasure();
+    this.host.toggleClass("is-annotating", on);
+    if (on) this.setHover(null);
   }
 
   /** Snap measurement picks to the nearest visible corner/edge. */
@@ -259,6 +363,9 @@ export class ViewerController {
   }
   isSnapping(): boolean {
     return this.snapEnabled;
+  }
+  isAnnotating(): boolean {
+    return this.annotateEnabled;
   }
 
   private eachMeshMaterial(fn: (m: THREE.Material) => void): void {
@@ -380,11 +487,26 @@ export class ViewerController {
 
   private onPointerUp = (e: PointerEvent): void => {
     this.dragging = false;
-    if (!this.measureEnabled || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (!this.measureEnabled && !this.annotateEnabled) return;
     const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
     if (moved > CLICK_MOVE_THRESHOLD) return; // it was an orbit drag, not a pick
-    this.pickMeasurePoint(e);
+    if (this.measureEnabled) this.pickMeasurePoint(e);
+    else this.pickAnnotate(e);
   };
+
+  private pickAnnotate(e: PointerEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObjects(this.pickables, false)[0];
+    if (!hit || !this.model) return;
+    const local = this.model.worldToLocal(hit.point.clone());
+    this.onAnnotate?.({ local, part: hit.object.name });
+  }
 
   private pickMeasurePoint(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -411,6 +533,16 @@ export class ViewerController {
       this.onMeasureUpdate?.(
         `≈ ${formatMm(dist)} (approx.)  ·  Δ ${num(dx)} / ${num(dy)} / ${num(dz)} mm (X/Y/Z)`,
       );
+      // Number labels beside each segment (main + axis legs).
+      const c1 = new THREE.Vector3(b.x, a.y, a.z);
+      const c2 = new THREE.Vector3(b.x, b.y, a.z);
+      const labels: MeasureLabel[] = [
+        { pos: mid(a, b), text: formatMm(dist), color: MEASURE_COLOR },
+      ];
+      if (dx > 1e-6) labels.push({ pos: mid(a, c1), text: `${num(dx)} mm`, color: AXIS_COLORS.x });
+      if (dy > 1e-6) labels.push({ pos: mid(c1, c2), text: `${num(dy)} mm`, color: AXIS_COLORS.y });
+      if (dz > 1e-6) labels.push({ pos: mid(c2, b), text: `${num(dz)} mm`, color: AXIS_COLORS.z });
+      this.onMeasureLabels?.(labels);
     } else {
       this.onMeasureUpdate?.(
         resolved.snapped
@@ -530,10 +662,11 @@ export class ViewerController {
       return;
     }
     if (!this.previewMesh) {
-      const geom = new THREE.SphereGeometry(this.markerRadius * 0.9, 16, 12);
+      // Unit sphere; scaled per frame so it keeps a constant on-screen size.
+      const geom = new THREE.SphereGeometry(1, 16, 12);
       const mat = new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.55, // a bit see-through so it doesn't hide the target
         depthTest: false, // always visible, even behind surfaces
       });
       this.previewMesh = new THREE.Mesh(geom, mat);
@@ -545,6 +678,14 @@ export class ViewerController {
     );
     this.previewMesh.position.copy(point);
     this.previewMesh.visible = true;
+    this.rescalePreview();
+  }
+
+  /** Scale the preview by camera distance so it stays a constant screen size. */
+  private rescalePreview(): void {
+    if (!this.previewMesh?.visible) return;
+    const dist = this.camera.position.distanceTo(this.previewMesh.position);
+    this.previewMesh.scale.setScalar(Math.max(dist * 0.012, 1e-4));
   }
 
   private disposePreview(): void {
@@ -566,6 +707,7 @@ export class ViewerController {
       else mat?.dispose?.();
       this.measureGroup.remove(child);
     }
+    this.onMeasureLabels?.([]);
     if (!keepReadout) {
       this.onMeasureUpdate?.(
         this.measureEnabled ? "Click two points on the model" : null,
@@ -584,16 +726,19 @@ export class ViewerController {
 
   private animate = (): void => {
     this.raf = requestAnimationFrame(this.animate);
+    const dt = this.clock.getDelta();
+    this.advanceRoll(dt);
     this.controls.update();
     // Frame-throttled pointer raycasting; suppressed while dragging (orbit).
     // In measure mode it drives the snap preview; otherwise the hover highlight.
     if (this.hoverPending && !this.dragging) {
       this.hoverPending = false;
       if (this.measureEnabled) this.updateMeasurePreview();
-      else this.processHover();
+      else if (!this.annotateEnabled) this.processHover();
     }
+    this.rescalePreview();
     this.renderer.render(this.scene, this.camera);
-    this.onFrame?.();
+    for (const fn of this.frameCallbacks) fn();
   };
 
   dispose(): void {
@@ -651,4 +796,12 @@ function formatMm(mm: number): string {
 /** Compact unit-less millimetre number for the per-axis components. */
 function num(mm: number): string {
   return mm >= 100 ? mm.toFixed(0) : mm.toFixed(1);
+}
+
+function mid(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
+  return a.clone().add(b).multiplyScalar(0.5);
+}
+
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }

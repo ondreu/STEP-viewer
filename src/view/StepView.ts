@@ -1,12 +1,7 @@
-import { FileView, TFile, WorkspaceLeaf } from "obsidian";
+import { FileView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
-import { stepToThree } from "../viewer/StepToThree";
-import { ViewerController } from "../viewer/ViewerController";
-import { createToolbar, iconButton } from "../ui/Toolbar";
-import { createTreePanel } from "../ui/TreePanel";
-import { PartInfoPanel } from "../ui/PartInfoPanel";
-import { ViewCube } from "../ui/ViewCube";
+import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -16,15 +11,17 @@ export const STEP_VIEW_TYPE = "step-viewer-view";
  * We extend FileView (not TextFileView): STEP is ASCII, but we never edit it or
  * hold it as a string — we read it binary and hand it to the parser.
  *
- * The ViewerController is created in `onLoadFile` and disposed in
- * `onUnloadFile`/`onClose`, because a single leaf may load several files over
- * its lifetime (design doc §5.2 note).
+ * The viewer is created in `onLoadFile` and disposed in `onUnloadFile`/`onClose`,
+ * because a single leaf may load several files over its lifetime (design §5.2).
  */
 export class StepView extends FileView {
-  private controller: ViewerController | null = null;
+  private viewer: ViewerHandle | null = null;
   private loadToken = 0;
 
-  constructor(leaf: WorkspaceLeaf) {
+  constructor(
+    leaf: WorkspaceLeaf,
+    private plugin: Plugin,
+  ) {
     super(leaf);
     this.navigation = true;
   }
@@ -45,7 +42,7 @@ export class StepView extends FileView {
     // Guard against overlapping loads when the file switches rapidly.
     const token = ++this.loadToken;
 
-    this.teardownController();
+    this.teardownViewer();
     const container = this.contentEl;
     container.empty();
     container.addClass("step-viewer-content");
@@ -65,7 +62,6 @@ export class StepView extends FileView {
       if (!result || !result.success) {
         throw new Error("Could not parse this STEP file (occt success=false).");
       }
-
       if (token !== this.loadToken) return;
 
       if (!result.meshes || result.meshes.length === 0) {
@@ -74,70 +70,10 @@ export class StepView extends FileView {
         return;
       }
 
-      const { group, tree } = stepToThree(result);
       loadingEl.remove();
-
-      const controller = new ViewerController(host);
-      this.controller = controller;
-      controller.setModel(group);
-
-      // Measurement readout (bottom-left). Shown while measuring.
-      const readout = host.createDiv({ cls: "step-viewer-measure-readout" });
-      readout.hide();
-      controller.onMeasureUpdate = (text) => {
-        if (text == null) {
-          readout.setText("");
-          readout.hide();
-        } else {
-          readout.setText(text);
-          readout.show();
-        }
-      };
-
-      // Structure-tree panel, hidden until toggled from the toolbar.
-      const treePanel = createTreePanel(host, tree, controller);
-      treePanel.el.toggle(false);
-
-      // Part-info panel (bottom-right), driven by hover. Also syncs the tree.
-      const info = new PartInfoPanel(host);
-      controller.onHover = (part) => {
-        info.update(part);
-        treePanel.reveal(part?.object ?? null);
-      };
-
-      // Right-side rail stacks the navigation cube, roll arrows and toolbar.
-      const rail = host.createDiv({ cls: "step-viewer-rail" });
-
-      // Navigation cube — click a face to snap to a standard view.
-      const cube = new ViewCube(rail, {
-        getOrientation: () => {
-          const cam = controller.getCamera();
-          return {
-            dir: cam.position.clone().sub(controller.getTarget()).normalize(),
-            up: cam.up.clone(),
-          };
-        },
-        onSelect: (dir) => controller.setViewDirection(dir),
-      });
-      controller.registerDisposable(cube);
-      controller.onFrame = () => cube.update();
-
-      // Roll arrows: rotate the model 90° about the view axis.
-      const roll = rail.createDiv({ cls: "step-viewer-roll" });
-      iconButton(roll, "rotate-ccw", "Rotate view 90° left", () =>
-        controller.rollView(-1),
-      );
-      iconButton(roll, "rotate-cw", "Rotate view 90° right", () =>
-        controller.rollView(1),
-      );
-
-      createToolbar(rail, controller, {
-        treeInitiallyOpen: false,
-        onToggleTree: () => {
-          const open = !treePanel.el.isShown();
-          treePanel.el.toggle(open);
-          return open;
-        },
+      this.viewer = mountViewer(host, result, {
+        plugin: this.plugin,
+        filePath: file.path,
       });
     } catch (err) {
       if (token !== this.loadToken) return;
@@ -148,17 +84,17 @@ export class StepView extends FileView {
 
   async onUnloadFile(): Promise<void> {
     this.loadToken++;
-    this.teardownController();
+    this.teardownViewer();
   }
 
   async onClose(): Promise<void> {
     this.loadToken++;
-    this.teardownController();
+    this.teardownViewer();
   }
 
-  private teardownController(): void {
-    this.controller?.dispose();
-    this.controller = null;
+  private teardownViewer(): void {
+    this.viewer?.dispose();
+    this.viewer = null;
   }
 
   private showLoading(host: HTMLElement): HTMLElement {
