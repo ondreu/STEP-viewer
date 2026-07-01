@@ -1,0 +1,11 @@
+# build / deps
+node_modules/
+main.js
+main.js.map
+*.wasm
+
+# obsidian
+data.json
+
+# os / editor
+.DS_Store

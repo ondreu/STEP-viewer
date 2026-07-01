@@ -1,0 +1,99 @@
+/* STEP Viewer plugin styles (design doc §8).
+   Uses Obsidian CSS variables so the viewer matches the active theme. */
+
+.step-viewer-content {
+  padding: 0;
+  height: 100%;
+}
+
+.step-viewer-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--background-primary);
+}
+
+.step-viewer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Toolbar overlay --- */
+.step-viewer-toolbar {
+  position: absolute;
+  top: var(--size-4-2);
+  right: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  z-index: 10;
+}
+
+.step-viewer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.step-viewer-btn:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+.step-viewer-btn.is-active {
+  color: var(--text-accent);
+  background-color: var(--background-modifier-active-hover);
+}
+
+/* --- Overlays (loading / empty / error) --- */
+.step-viewer-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-4);
+  text-align: center;
+  pointer-events: none;
+}
+
+.step-viewer-message {
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+}
+
+.step-viewer-message-sub {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  max-width: 40ch;
+}
+
+.step-viewer-error .step-viewer-message {
+  color: var(--text-error);
+}
+
+/* --- Loading spinner --- */
+.step-viewer-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: step-viewer-spin 0.8s linear infinite;
+}
+
+@keyframes step-viewer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
