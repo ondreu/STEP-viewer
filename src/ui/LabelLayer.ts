@@ -45,12 +45,12 @@ export class LabelLayer {
     for (const it of this.items) {
       this.v.copy(it.world()).project(camera);
       if (this.v.z > 1 || this.v.z < -1) {
-        it.el.style.display = "none";
+        it.el.toggleClass("step-viewer-label-offscreen", true);
         continue;
       }
       const x = (this.v.x * 0.5 + 0.5) * w;
       const y = (-this.v.y * 0.5 + 0.5) * h;
-      it.el.style.display = "";
+      it.el.toggleClass("step-viewer-label-offscreen", false);
       it.el.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
     }
   }

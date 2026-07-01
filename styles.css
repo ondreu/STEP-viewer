@@ -97,6 +97,11 @@
   will-change: transform;
 }
 
+/* Labels whose anchor is behind the camera / outside the depth range. */
+.step-viewer-label-offscreen {
+  display: none !important;
+}
+
 .step-viewer-mlabel {
   padding: 1px 6px;
   border-radius: var(--radius-s);

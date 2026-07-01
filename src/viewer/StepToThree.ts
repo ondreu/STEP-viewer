@@ -150,8 +150,9 @@ function buildMaterials(
   const materials: THREE.Material[] = [];
   geometry.clearGroups();
 
-  // faces! is safe here: hasFaceColors implies faces is a non-empty array.
-  for (const face of faces as NonNullable<typeof faces>) {
+  // `faces` is narrowed to a non-empty array here: hasFaceColors is a const
+  // whose truthiness implies Array.isArray(faces).
+  for (const face of faces) {
     const materialIndex = materials.length;
     materials.push(standardMaterial(face.color ?? mesh.color));
     // brep_faces index triangles; a triangle spans 3 indices.

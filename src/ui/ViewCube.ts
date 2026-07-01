@@ -50,7 +50,7 @@ export class ViewCube {
     this.renderer.domElement.classList.add("step-viewer-viewcube");
     host.appendChild(this.renderer.domElement);
 
-    const dark = document.body.classList.contains("theme-dark");
+    const dark = activeDocument.body.classList.contains("theme-dark");
     this.materials = FACES.map((f) => makeFaceMaterial(f.label, dark));
     this.cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.materials);
     this.scene.add(this.cube);
@@ -134,7 +134,7 @@ export class ViewCube {
 
 /** Render a face label onto a canvas texture. */
 function makeFaceMaterial(label: string, dark: boolean): THREE.MeshBasicMaterial {
-  const canvas = document.createElement("canvas");
+  const canvas = activeDocument.createElement("canvas");
   canvas.width = 128;
   canvas.height = 128;
   const ctx = canvas.getContext("2d")!;

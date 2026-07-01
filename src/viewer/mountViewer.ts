@@ -56,7 +56,7 @@ export function mountViewer(
   controller.onMeasureLabels = (labels) => {
     for (const h of measureLabels) h.remove();
     measureLabels = labels.map((l) => {
-      const el = document.createElement("div");
+      const el = activeDocument.createElement("div");
       el.className = "step-viewer-mlabel";
       el.textContent = l.text;
       el.style.color = `#${l.color.toString(16).padStart(6, "0")}`;

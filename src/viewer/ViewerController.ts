@@ -735,7 +735,7 @@ export class ViewerController {
   }
 
   private animate = (): void => {
-    this.raf = requestAnimationFrame(this.animate);
+    this.raf = window.requestAnimationFrame(this.animate);
     const dt = this.clock.getDelta();
     this.advanceRoll(dt);
     this.controls.update();
@@ -755,7 +755,7 @@ export class ViewerController {
     if (this.disposed) return;
     this.disposed = true;
 
-    cancelAnimationFrame(this.raf);
+    window.cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.controls.dispose();
 

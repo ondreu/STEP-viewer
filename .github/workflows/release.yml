@@ -13,6 +13,9 @@ on:
 
 permissions:
   contents: write
+  # Required for build provenance attestations of the release assets.
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -42,6 +45,15 @@ jobs:
             tag="$(node -p "require('./manifest.json').version")"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Cryptographic provenance so users can verify the assets were built
+      # from this repository (styles.css ships as-is; main.js is the bundle).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            main.js
+            styles.css
 
       - name: Create release
         env:

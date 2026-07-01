@@ -1,6 +1,6 @@
 {
   "name": "obsidian-step-viewer",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "View STEP (.step/.stp) CAD models in a 3D viewer inside Obsidian.",
   "main": "main.js",
   "scripts": {
@@ -16,12 +16,11 @@
     "occt",
     "three"
   ],
-  "author": "",
+  "author": "Ondřej Uhnávy",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/three": "^0.160.0",
-    "builtin-modules": "^3.3.0",
     "esbuild": "^0.20.0",
     "obsidian": "latest",
     "tslib": "^2.6.2",

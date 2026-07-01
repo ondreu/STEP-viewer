@@ -118,15 +118,15 @@ export class AnnotationLayer {
   private spawn(d: StoredAnnotation): Live {
     const pin = this.controller.addAnnotationPin(new THREE.Vector3(d.x, d.y, d.z));
 
-    const el = document.createElement("div");
+    const el = activeDocument.createElement("div");
     el.className = "step-viewer-annot";
 
-    const del = document.createElement("button");
+    const del = activeDocument.createElement("button");
     del.className = "step-viewer-annot-del";
     del.setAttribute("aria-label", "Delete note");
     del.textContent = "×";
 
-    const textEl = document.createElement("div");
+    const textEl = activeDocument.createElement("div");
     textEl.className = "step-viewer-annot-text";
     textEl.contentEditable = "true";
     textEl.textContent = d.text;
