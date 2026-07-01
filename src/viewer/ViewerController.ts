@@ -5,8 +5,24 @@ import { EDGES_TAG, MESH_TAG } from "./StepToThree";
 
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
+const HOVER_EMISSIVE = 0x2b6cff;
+const HOVER_INTENSITY = 0.55;
 // A click that moves less than this many pixels is a pick, not an orbit drag.
 const CLICK_MOVE_THRESHOLD = 5;
+
+/** Details of the part currently under the cursor, for the info panel + tree. */
+export interface PartInfo {
+  object: THREE.Object3D;
+  name: string;
+  triangles: number;
+  size: { x: number; y: number; z: number };
+}
+
+interface SavedEmissive {
+  mat: THREE.MeshStandardMaterial;
+  emissive: number;
+  intensity: number;
+}
 
 /**
  * Owns the three.js scene, camera, controls and render loop for one view
@@ -30,15 +46,26 @@ export class ViewerController {
   private edgesVisible = true;
   private transparent = false;
 
-  // Meshes eligible for measurement raycasting (edges excluded).
+  // Meshes eligible for hover/measurement raycasting (edges excluded).
   private pickables: THREE.Mesh[] = [];
+  private raycaster = new THREE.Raycaster();
+
+  // Hover highlight + part info.
+  private hovered: THREE.Mesh | null = null;
+  private hoverSaved: SavedEmissive[] = [];
+  private pointerNdc = new THREE.Vector2();
+  private hoverPending = false;
+  private dragging = false;
+  /** Called with the hovered part, or null when nothing is under the cursor. */
+  onHover: ((info: PartInfo | null) => void) | null = null;
 
   // Measurement state (design doc §1: results are approximate — mesh, not B-rep).
   private measureEnabled = false;
+  private snapEnabled = false;
   private measureGroup = new THREE.Group();
   private measurePoints: THREE.Vector3[] = [];
   private markerRadius = 1;
-  private raycaster = new THREE.Raycaster();
+  private snapThreshold = 1;
   /** Called with the current measurement readout, or null to clear it. */
   onMeasureUpdate: ((text: string | null) => void) | null = null;
 
@@ -69,8 +96,11 @@ export class ViewerController {
     dir2.position.set(-1, -0.5, -1);
     this.scene.add(dir2);
 
-    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
+    const el = this.renderer.domElement;
+    el.addEventListener("pointerdown", this.onPointerDown);
+    el.addEventListener("pointermove", this.onPointerMove);
+    el.addEventListener("pointerup", this.onPointerUp);
+    el.addEventListener("pointerleave", this.onPointerLeave);
 
     // Obsidian resizes leaves without firing window.resize; observe the host.
     this.ro = new ResizeObserver(() => this.onResize());
@@ -84,11 +114,12 @@ export class ViewerController {
       this.disposeGroup(group);
       return;
     }
+    this.setHover(null); // drop refs into the old model before disposing it
+    this.clearMeasurement();
     if (this.model) {
       this.scene.remove(this.model);
       this.disposeGroup(this.model);
     }
-    this.clearMeasurement();
     this.model = group;
 
     this.pickables = [];
@@ -97,10 +128,9 @@ export class ViewerController {
     });
 
     const box = new THREE.Box3().setFromObject(group);
-    const diag = box.isEmpty()
-      ? 1
-      : box.getSize(new THREE.Vector3()).length();
+    const diag = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
     this.markerRadius = Math.max(diag * 0.006, 1e-4);
+    this.snapThreshold = this.markerRadius * 4;
 
     this.applyWireframe();
     this.applyEdgesVisibility();
@@ -140,12 +170,19 @@ export class ViewerController {
   toggleMeasure(): boolean {
     this.measureEnabled = !this.measureEnabled;
     this.host.toggleClass("is-measuring", this.measureEnabled);
-    if (!this.measureEnabled) {
-      this.clearMeasurement();
-    } else {
+    if (this.measureEnabled) {
+      this.setHover(null); // hover highlight is suppressed while measuring
       this.onMeasureUpdate?.("Click two points on the model");
+    } else {
+      this.clearMeasurement();
     }
     return this.measureEnabled;
+  }
+
+  /** Snap measurement picks to the nearest visible corner/edge. */
+  toggleSnap(): boolean {
+    this.snapEnabled = !this.snapEnabled;
+    return this.snapEnabled;
   }
 
   isWireframe(): boolean {
@@ -159,6 +196,9 @@ export class ViewerController {
   }
   isMeasuring(): boolean {
     return this.measureEnabled;
+  }
+  isSnapping(): boolean {
+    return this.snapEnabled;
   }
 
   private eachMeshMaterial(fn: (m: THREE.Material) => void): void {
@@ -194,14 +234,85 @@ export class ViewerController {
     });
   }
 
+  // --- Hover highlight -----------------------------------------------------
+
+  private onPointerMove = (e: PointerEvent): void => {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointerNdc.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.hoverPending = true;
+  };
+
+  private onPointerLeave = (): void => {
+    if (!this.measureEnabled) this.setHover(null);
+    this.hoverPending = false;
+  };
+
+  private processHover(): void {
+    this.raycaster.setFromCamera(this.pointerNdc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.pickables, false);
+    this.setHover((hits[0]?.object as THREE.Mesh) ?? null);
+  }
+
+  private setHover(mesh: THREE.Mesh | null): void {
+    if (mesh === this.hovered) return;
+
+    // Restore the previously highlighted materials.
+    for (const s of this.hoverSaved) {
+      s.mat.emissive.setHex(s.emissive);
+      s.mat.emissiveIntensity = s.intensity;
+    }
+    this.hoverSaved = [];
+    this.hovered = mesh;
+
+    if (!mesh) {
+      this.onHover?.(null);
+      return;
+    }
+
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const sm = m as THREE.MeshStandardMaterial;
+      if (sm && sm.emissive) {
+        this.hoverSaved.push({
+          mat: sm,
+          emissive: sm.emissive.getHex(),
+          intensity: sm.emissiveIntensity ?? 1,
+        });
+        sm.emissive.setHex(HOVER_EMISSIVE);
+        sm.emissiveIntensity = HOVER_INTENSITY;
+      }
+    }
+
+    this.onHover?.(this.describePart(mesh));
+  }
+
+  private describePart(mesh: THREE.Mesh): PartInfo {
+    const box = new THREE.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE.Vector3());
+    const index = mesh.geometry.getIndex();
+    const posCount = mesh.geometry.getAttribute("position")?.count ?? 0;
+    const triangles = index ? index.count / 3 : posCount / 3;
+    return {
+      object: mesh,
+      name: mesh.name,
+      triangles: Math.round(triangles),
+      size: { x: size.x, y: size.y, z: size.z },
+    };
+  }
+
   // --- Measurement ---------------------------------------------------------
 
   private onPointerDown = (e: PointerEvent): void => {
     this.pointerDownX = e.clientX;
     this.pointerDownY = e.clientY;
+    this.dragging = true;
   };
 
   private onPointerUp = (e: PointerEvent): void => {
+    this.dragging = false;
     if (!this.measureEnabled || e.button !== 0) return;
     const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
     if (moved > CLICK_MOVE_THRESHOLD) return; // it was an orbit drag, not a pick
@@ -221,7 +332,15 @@ export class ViewerController {
     // A completed A–B pair starts fresh on the next click.
     if (this.measurePoints.length >= 2) this.clearMeasurement(true);
 
-    const point = hits[0].point.clone();
+    let point = hits[0].point.clone();
+    let snapped = false;
+    if (this.snapEnabled) {
+      const s = this.snapPoint(hits[0].object as THREE.Mesh, point);
+      if (s) {
+        point = s;
+        snapped = true;
+      }
+    }
     this.measurePoints.push(point);
     this.addMarker(point);
 
@@ -230,8 +349,63 @@ export class ViewerController {
       const dist = this.measurePoints[0].distanceTo(this.measurePoints[1]);
       this.onMeasureUpdate?.(`≈ ${formatMm(dist)} (approx.)`);
     } else {
-      this.onMeasureUpdate?.("First point set — click the second point");
+      this.onMeasureUpdate?.(
+        snapped ? "Snapped — click the second point" : "First point set — click the second point",
+      );
     }
+  }
+
+  /**
+   * Snap `p` to the nearest visible corner or edge of `mesh`, using the
+   * feature-edge geometry we already build for display. Corners win over edges
+   * when both are within threshold. Returns null if nothing is close enough.
+   */
+  private snapPoint(mesh: THREE.Mesh, p: THREE.Vector3): THREE.Vector3 | null {
+    const edges = mesh.children.find((c) => c.userData?.[EDGES_TAG]) as
+      | THREE.LineSegments
+      | undefined;
+    const pos = edges?.geometry.getAttribute("position") as
+      | THREE.BufferAttribute
+      | undefined;
+    if (!pos) return null;
+
+    mesh.updateWorldMatrix(true, false);
+    const mw = mesh.matrixWorld;
+
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const closest = new THREE.Vector3();
+    const seg = new THREE.Line3();
+
+    let bestCorner: THREE.Vector3 | null = null;
+    let bestCornerDist = Infinity;
+    let bestEdge: THREE.Vector3 | null = null;
+    let bestEdgeDist = Infinity;
+
+    for (let i = 0; i < pos.count; i += 2) {
+      a.fromBufferAttribute(pos, i).applyMatrix4(mw);
+      b.fromBufferAttribute(pos, i + 1).applyMatrix4(mw);
+
+      for (const v of [a, b]) {
+        const d = v.distanceTo(p);
+        if (d < bestCornerDist) {
+          bestCornerDist = d;
+          bestCorner = v.clone();
+        }
+      }
+
+      seg.set(a, b);
+      seg.closestPointToPoint(p, true, closest);
+      const d = closest.distanceTo(p);
+      if (d < bestEdgeDist) {
+        bestEdgeDist = d;
+        bestEdge = closest.clone();
+      }
+    }
+
+    if (bestCorner && bestCornerDist <= this.snapThreshold) return bestCorner;
+    if (bestEdge && bestEdgeDist <= this.snapThreshold) return bestEdge;
+    return null;
   }
 
   private addMarker(p: THREE.Vector3): void {
@@ -259,7 +433,11 @@ export class ViewerController {
       else mat?.dispose?.();
       this.measureGroup.remove(child);
     }
-    if (!keepReadout) this.onMeasureUpdate?.(this.measureEnabled ? "Click two points on the model" : null);
+    if (!keepReadout) {
+      this.onMeasureUpdate?.(
+        this.measureEnabled ? "Click two points on the model" : null,
+      );
+    }
   }
 
   private onResize(): void {
@@ -274,6 +452,11 @@ export class ViewerController {
   private animate = (): void => {
     this.raf = requestAnimationFrame(this.animate);
     this.controls.update();
+    // Frame-throttled hover raycasting; suppressed while dragging or measuring.
+    if (this.hoverPending && !this.dragging && !this.measureEnabled) {
+      this.hoverPending = false;
+      this.processHover();
+    }
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -284,9 +467,15 @@ export class ViewerController {
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.controls.dispose();
-    this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
 
+    const el = this.renderer.domElement;
+    el.removeEventListener("pointerdown", this.onPointerDown);
+    el.removeEventListener("pointermove", this.onPointerMove);
+    el.removeEventListener("pointerup", this.onPointerUp);
+    el.removeEventListener("pointerleave", this.onPointerLeave);
+
+    this.hoverSaved = [];
+    this.hovered = null;
     this.clearMeasurement(true);
 
     if (this.model) {

@@ -5,6 +5,7 @@ import { stepToThree } from "../viewer/StepToThree";
 import { ViewerController } from "../viewer/ViewerController";
 import { createToolbar } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
+import { PartInfoPanel } from "../ui/PartInfoPanel";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -94,13 +95,20 @@ export class StepView extends FileView {
 
       // Structure-tree panel, hidden until toggled from the toolbar.
       const treePanel = createTreePanel(host, tree, controller);
-      treePanel.toggle(false);
+      treePanel.el.toggle(false);
+
+      // Part-info panel (bottom-right), driven by hover. Also syncs the tree.
+      const info = new PartInfoPanel(host);
+      controller.onHover = (part) => {
+        info.update(part);
+        treePanel.reveal(part?.object ?? null);
+      };
 
       createToolbar(host, controller, {
         treeInitiallyOpen: false,
         onToggleTree: () => {
-          const open = !treePanel.isShown();
-          treePanel.toggle(open);
+          const open = !treePanel.el.isShown();
+          treePanel.el.toggle(open);
           return open;
         },
       });

@@ -50,6 +50,16 @@ export function createToolbar(
   );
   measureBtn.toggleClass("is-active", controller.isMeasuring());
 
+  const snapBtn = makeButton(
+    bar,
+    "magnet",
+    "Snap measurement to corners / edges",
+    () => {
+      snapBtn.toggleClass("is-active", controller.toggleSnap());
+    },
+  );
+  snapBtn.toggleClass("is-active", controller.isSnapping());
+
   const treeBtn = makeButton(bar, "list-tree", "Toggle structure tree", () => {
     treeBtn.toggleClass("is-active", opts.onToggleTree());
   });

@@ -73,6 +73,35 @@
   pointer-events: none;
 }
 
+/* --- Part info panel (hover) --- */
+.step-viewer-info {
+  position: absolute;
+  right: var(--size-4-2);
+  bottom: var(--size-4-2);
+  max-width: 260px;
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.step-viewer-info-name {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-viewer-info-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Structure tree panel --- */
 .step-viewer-tree {
   position: absolute;
@@ -114,6 +143,11 @@
   padding: 1px var(--size-4-2) 1px 0;
   font-size: var(--font-ui-small);
   white-space: nowrap;
+}
+
+.step-viewer-tree-row.is-active {
+  background-color: var(--background-modifier-active-hover);
+  border-radius: var(--radius-s);
 }
 
 .step-viewer-tree-caret {

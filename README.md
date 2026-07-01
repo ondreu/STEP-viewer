@@ -16,11 +16,17 @@ Built to the specification in
 - Per-face colors from the model when present, default material otherwise.
 - Edge display for geometry readability.
 - **Transparency** toggle to see internal geometry.
+- **Hover highlight** — the part under the cursor is highlighted, its details
+  (name, bounding-box dimensions, triangle count) shown in an info panel, and
+  the matching node is revealed in the structure tree.
 - **Distance measurement** — click two points on the model to read the
   straight-line distance. Marked **approximate** (see note below).
+- **Snap to corners / edges** — optional toggle that snaps measurement picks to
+  the nearest visible vertex or edge.
 - **Structure tree** panel — the STEP assembly hierarchy, with per-part
   visibility toggles and click-to-frame.
-- Toolbar: reset camera, wireframe, edges, transparency, measure, structure tree.
+- Toolbar: reset camera, wireframe, edges, transparency, measure, snap,
+  structure tree.
 - Themed background and clean loading / empty / error states.
 - Careful resource cleanup (geometry, materials, WebGL context) on close.
 
