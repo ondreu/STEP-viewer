@@ -97,9 +97,11 @@
   will-change: transform;
 }
 
-/* Labels whose anchor is behind the camera / outside the depth range. */
-.step-viewer-label-offscreen {
-  display: none !important;
+/* Labels whose anchor is behind the camera / outside the depth range. The
+   two-class selector outweighs the per-label display rules (e.g. annotations
+   use display:flex) without needing !important. */
+.step-viewer-labels > .step-viewer-label-offscreen {
+  display: none;
 }
 
 .step-viewer-mlabel {

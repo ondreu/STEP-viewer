@@ -67,8 +67,9 @@ declare module "occt-import-js" {
   export default factory;
 }
 
-// esbuild's binary loader turns `import x from "….wasm"` into a Uint8Array.
+// The wasm-gzip esbuild plugin turns `import x from "….wasm"` into a gzipped,
+// base64-encoded string (inflated at runtime in OcctLoader).
 declare module "*.wasm" {
-  const data: Uint8Array;
+  const data: string;
   export default data;
 }
