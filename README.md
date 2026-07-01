@@ -20,14 +20,17 @@ Built to the specification in
   (name, bounding-box dimensions, triangle count) shown in an info panel, and
   the matching node is revealed in the structure tree.
 - **Distance measurement** — click two points on the model to read the
-  straight-line distance. Marked **approximate** (see note below).
+  straight-line distance **plus the per-axis X / Y / Z components** (shown both
+  in the readout and as coloured axis legs). Marked **approximate** (see note).
 - **Snap to corners / edges** — optional toggle that snaps measurement picks to
-  the nearest visible vertex or edge.
+  the nearest visible vertex or edge, with a **live preview marker** (green when
+  snapping, orange when free) so you can see where a click will land.
 - **Structure tree** panel — the STEP assembly hierarchy, with per-part
   visibility toggles and click-to-frame.
 - **Navigation cube** (top-right) — a ViewCube that tracks the camera; click a
-  face to snap to a standard view (front / back / top / bottom / left / right).
-- Toolbar: reset camera, wireframe, edges, transparency, measure, snap,
+  face to snap to a standard view (front / back / top / bottom / left / right),
+  with **↶ / ↷ roll arrows** to rotate the view 90°.
+- Toolbar: fit camera, wireframe, edges, transparency, measure, snap,
   structure tree.
 - Themed background and clean loading / empty / error states.
 - Careful resource cleanup (geometry, materials, WebGL context) on close.

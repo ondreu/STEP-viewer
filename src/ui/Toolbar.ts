@@ -21,7 +21,7 @@ export function createToolbar(
 ): HTMLElement {
   const bar = host.createDiv({ cls: "step-viewer-toolbar" });
 
-  makeButton(bar, "rotate-ccw", "Reset camera", () => {
+  makeButton(bar, "maximize", "Reset / fit camera", () => {
     controller.resetCamera();
   });
 
@@ -69,6 +69,16 @@ export function createToolbar(
 }
 
 function makeButton(
+  parent: HTMLElement,
+  icon: string,
+  tooltip: string,
+  onClick: () => void,
+): HTMLElement {
+  return iconButton(parent, icon, tooltip, onClick);
+}
+
+/** Shared icon-button factory (also used for the roll arrows). */
+export function iconButton(
   parent: HTMLElement,
   icon: string,
   tooltip: string,

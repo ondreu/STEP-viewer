@@ -5,8 +5,9 @@ import { EDGES_TAG, MESH_TAG } from "./StepToThree";
 
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
-const HOVER_EMISSIVE = 0x2b6cff;
-const HOVER_INTENSITY = 0.55;
+const HIGHLIGHT_COLOR = 0xff8a00;
+const SNAP_COLOR = 0x22cc66;
+const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
 const CLICK_MOVE_THRESHOLD = 5;
 
@@ -16,12 +17,6 @@ export interface PartInfo {
   name: string;
   triangles: number;
   size: { x: number; y: number; z: number };
-}
-
-interface SavedEmissive {
-  mat: THREE.MeshStandardMaterial;
-  emissive: number;
-  intensity: number;
 }
 
 /**
@@ -50,9 +45,12 @@ export class ViewerController {
   private pickables: THREE.Mesh[] = [];
   private raycaster = new THREE.Raycaster();
 
-  // Hover highlight + part info.
+  // Hover highlight + part info. The highlight is a translucent overlay mesh
+  // (sharing the hovered geometry) so it reads on any base colour — an emissive
+  // tint is swamped on light/already-bright materials.
   private hovered: THREE.Mesh | null = null;
-  private hoverSaved: SavedEmissive[] = [];
+  private highlightMesh: THREE.Mesh | null = null;
+  private highlightMat: THREE.MeshBasicMaterial | null = null;
   private pointerNdc = new THREE.Vector2();
   private hoverPending = false;
   private dragging = false;
@@ -68,6 +66,8 @@ export class ViewerController {
   private measureEnabled = false;
   private snapEnabled = false;
   private measureGroup = new THREE.Group();
+  private previewGroup = new THREE.Group();
+  private previewMesh: THREE.Mesh | null = null;
   private measurePoints: THREE.Vector3[] = [];
   private markerRadius = 1;
   private snapThreshold = 1;
@@ -85,6 +85,7 @@ export class ViewerController {
 
     this.scene.background = null; // let CSS theme background show through
     this.scene.add(this.measureGroup);
+    this.scene.add(this.previewGroup);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1e6);
     this.camera.position.set(1, 1, 1);
@@ -121,6 +122,7 @@ export class ViewerController {
     }
     this.setHover(null); // drop refs into the old model before disposing it
     this.clearMeasurement();
+    this.disposePreview();
     if (this.model) {
       this.scene.remove(this.model);
       this.disposeGroup(this.model);
@@ -169,19 +171,40 @@ export class ViewerController {
   /**
    * Snap the camera to look along `dir` (from the target towards the camera),
    * keeping the current distance. Used by the view cube's standard views.
+   *
+   * We deliberately leave `camera.up` at world-Y and let OrbitControls orient
+   * the camera via `update()`. OrbitControls computes its pole axis from the
+   * up vector *once*, so changing `camera.up` here would desync it and make
+   * mouse control break after a top/bottom (upside-down) view. `update()` also
+   * clamps the polar angle away from the exact pole, so straight up/down is safe.
    */
   setViewDirection(dir: THREE.Vector3): void {
     const target = this.controls.target;
     const dist = this.camera.position.distanceTo(target) || 1;
-    // Avoid a degenerate up vector when looking straight down/up.
-    const up =
-      Math.abs(dir.y) > 0.99
-        ? new THREE.Vector3(0, 0, 1)
-        : new THREE.Vector3(0, 1, 0);
-    this.camera.up.copy(up);
-    this.camera.position.copy(target).addScaledVector(dir, dist);
-    this.camera.lookAt(target);
+    this.camera.position.copy(target).addScaledVector(dir.clone().normalize(), dist);
     this.controls.update();
+  }
+
+  /**
+   * Roll the model 90° about the current view axis (the ↶ / ↷ arrows).
+   * We rotate the model, not the camera: OrbitControls owns the camera up and
+   * doesn't support roll, so rolling the camera would desync it.
+   */
+  rollView(sign: 1 | -1): void {
+    if (!this.model) return;
+    const axis = new THREE.Vector3();
+    this.camera.getWorldDirection(axis); // view direction, in world space
+    const pivot = this.controls.target.clone();
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, (sign * Math.PI) / 2);
+
+    this.model.position.sub(pivot).applyQuaternion(q).add(pivot);
+    this.model.quaternion.premultiply(q);
+    this.model.updateMatrixWorld(true);
+
+    // Markers/preview are world-anchored and would drift from the geometry.
+    this.setHover(null);
+    this.clearMeasurement();
+    this.setPreview(null, false);
   }
 
   toggleWireframe(): boolean {
@@ -211,6 +234,7 @@ export class ViewerController {
       this.onMeasureUpdate?.("Click two points on the model");
     } else {
       this.clearMeasurement();
+      this.setPreview(null, false);
     }
     return this.measureEnabled;
   }
@@ -282,7 +306,8 @@ export class ViewerController {
   };
 
   private onPointerLeave = (): void => {
-    if (!this.measureEnabled) this.setHover(null);
+    if (this.measureEnabled) this.setPreview(null, false);
+    else this.setHover(null);
     this.hoverPending = false;
   };
 
@@ -294,13 +319,7 @@ export class ViewerController {
 
   private setHover(mesh: THREE.Mesh | null): void {
     if (mesh === this.hovered) return;
-
-    // Restore the previously highlighted materials.
-    for (const s of this.hoverSaved) {
-      s.mat.emissive.setHex(s.emissive);
-      s.mat.emissiveIntensity = s.intensity;
-    }
-    this.hoverSaved = [];
+    this.clearHighlight();
     this.hovered = mesh;
 
     if (!mesh) {
@@ -308,21 +327,33 @@ export class ViewerController {
       return;
     }
 
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) {
-      const sm = m as THREE.MeshStandardMaterial;
-      if (sm && sm.emissive) {
-        this.hoverSaved.push({
-          mat: sm,
-          emissive: sm.emissive.getHex(),
-          intensity: sm.emissiveIntensity ?? 1,
-        });
-        sm.emissive.setHex(HOVER_EMISSIVE);
-        sm.emissiveIntensity = HOVER_INTENSITY;
-      }
-    }
+    // Overlay a translucent copy that shares the geometry. polygonOffset pulls
+    // it slightly forward to avoid z-fighting with the original surface.
+    this.highlightMat = new THREE.MeshBasicMaterial({
+      color: HIGHLIGHT_COLOR,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    this.highlightMesh = new THREE.Mesh(mesh.geometry, this.highlightMat);
+    this.highlightMesh.renderOrder = 2;
+    this.highlightMesh.raycast = () => {}; // never pickable
+    mesh.add(this.highlightMesh);
 
     this.onHover?.(this.describePart(mesh));
+  }
+
+  /** Remove the hover overlay (never disposes the shared geometry). */
+  private clearHighlight(): void {
+    if (this.highlightMesh) {
+      this.highlightMesh.parent?.remove(this.highlightMesh);
+      this.highlightMesh = null;
+    }
+    this.highlightMat?.dispose();
+    this.highlightMat = null;
   }
 
   private describePart(mesh: THREE.Mesh): PartInfo {
@@ -361,13 +392,41 @@ export class ViewerController {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.pickables, false);
-    if (hits.length === 0) return;
+    const resolved = this.raycastResolve(ndc);
+    if (!resolved) return;
 
     // A completed A–B pair starts fresh on the next click.
     if (this.measurePoints.length >= 2) this.clearMeasurement(true);
 
+    this.measurePoints.push(resolved.point);
+    this.addMarker(resolved.point);
+
+    if (this.measurePoints.length === 2) {
+      const [a, b] = this.measurePoints;
+      this.drawMeasureLine(a, b);
+      const dist = a.distanceTo(b);
+      const dx = Math.abs(b.x - a.x);
+      const dy = Math.abs(b.y - a.y);
+      const dz = Math.abs(b.z - a.z);
+      this.onMeasureUpdate?.(
+        `≈ ${formatMm(dist)} (approx.)  ·  Δ ${num(dx)} / ${num(dy)} / ${num(dz)} mm (X/Y/Z)`,
+      );
+    } else {
+      this.onMeasureUpdate?.(
+        resolved.snapped
+          ? "Snapped — click the second point"
+          : "First point set — click the second point",
+      );
+    }
+  }
+
+  /** Raycast at `ndc` and resolve the hit to a (possibly snapped) point. */
+  private raycastResolve(
+    ndc: THREE.Vector2,
+  ): { point: THREE.Vector3; snapped: boolean } | null {
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.pickables, false);
+    if (hits.length === 0) return null;
     let point = hits[0].point.clone();
     let snapped = false;
     if (this.snapEnabled) {
@@ -377,18 +436,7 @@ export class ViewerController {
         snapped = true;
       }
     }
-    this.measurePoints.push(point);
-    this.addMarker(point);
-
-    if (this.measurePoints.length === 2) {
-      this.drawMeasureLine();
-      const dist = this.measurePoints[0].distanceTo(this.measurePoints[1]);
-      this.onMeasureUpdate?.(`≈ ${formatMm(dist)} (approx.)`);
-    } else {
-      this.onMeasureUpdate?.(
-        snapped ? "Snapped — click the second point" : "First point set — click the second point",
-      );
-    }
+    return { point, snapped };
   }
 
   /**
@@ -452,10 +500,59 @@ export class ViewerController {
     this.measureGroup.add(sphere);
   }
 
-  private drawMeasureLine(): void {
-    const geom = new THREE.BufferGeometry().setFromPoints(this.measurePoints);
-    const mat = new THREE.LineBasicMaterial({ color: MEASURE_COLOR });
+  private drawMeasureLine(a: THREE.Vector3, b: THREE.Vector3): void {
+    // Direct A–B line.
+    this.addLeg(a, b, MEASURE_COLOR);
+    // Axis-aligned legs showing the X / Y / Z components of the span.
+    const c1 = new THREE.Vector3(b.x, a.y, a.z);
+    const c2 = new THREE.Vector3(b.x, b.y, a.z);
+    this.addLeg(a, c1, AXIS_COLORS.x);
+    this.addLeg(c1, c2, AXIS_COLORS.y);
+    this.addLeg(c2, b, AXIS_COLORS.z);
+  }
+
+  private addLeg(a: THREE.Vector3, b: THREE.Vector3, color: number): void {
+    const geom = new THREE.BufferGeometry().setFromPoints([a, b]);
+    const mat = new THREE.LineBasicMaterial({ color });
     this.measureGroup.add(new THREE.Line(geom, mat));
+  }
+
+  // --- Measurement snap preview -------------------------------------------
+
+  private updateMeasurePreview(): void {
+    const resolved = this.raycastResolve(this.pointerNdc);
+    this.setPreview(resolved?.point ?? null, resolved?.snapped ?? false);
+  }
+
+  private setPreview(point: THREE.Vector3 | null, snapped: boolean): void {
+    if (!point) {
+      if (this.previewMesh) this.previewMesh.visible = false;
+      return;
+    }
+    if (!this.previewMesh) {
+      const geom = new THREE.SphereGeometry(this.markerRadius * 0.9, 16, 12);
+      const mat = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false, // always visible, even behind surfaces
+      });
+      this.previewMesh = new THREE.Mesh(geom, mat);
+      this.previewMesh.renderOrder = 3;
+      this.previewGroup.add(this.previewMesh);
+    }
+    (this.previewMesh.material as THREE.MeshBasicMaterial).color.setHex(
+      snapped ? SNAP_COLOR : MEASURE_COLOR,
+    );
+    this.previewMesh.position.copy(point);
+    this.previewMesh.visible = true;
+  }
+
+  private disposePreview(): void {
+    if (!this.previewMesh) return;
+    this.previewMesh.geometry.dispose();
+    (this.previewMesh.material as THREE.Material).dispose();
+    this.previewGroup.remove(this.previewMesh);
+    this.previewMesh = null;
   }
 
   /** Remove markers/line. `keepReadout` avoids clobbering the pick prompt. */
@@ -488,10 +585,12 @@ export class ViewerController {
   private animate = (): void => {
     this.raf = requestAnimationFrame(this.animate);
     this.controls.update();
-    // Frame-throttled hover raycasting; suppressed while dragging or measuring.
-    if (this.hoverPending && !this.dragging && !this.measureEnabled) {
+    // Frame-throttled pointer raycasting; suppressed while dragging (orbit).
+    // In measure mode it drives the snap preview; otherwise the hover highlight.
+    if (this.hoverPending && !this.dragging) {
       this.hoverPending = false;
-      this.processHover();
+      if (this.measureEnabled) this.updateMeasurePreview();
+      else this.processHover();
     }
     this.renderer.render(this.scene, this.camera);
     this.onFrame?.();
@@ -514,9 +613,10 @@ export class ViewerController {
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
 
-    this.hoverSaved = [];
+    this.clearHighlight();
     this.hovered = null;
     this.clearMeasurement(true);
+    this.disposePreview();
 
     if (this.model) {
       this.scene.remove(this.model);
@@ -546,4 +646,9 @@ export class ViewerController {
 function formatMm(mm: number): string {
   if (mm >= 1000) return `${(mm / 1000).toFixed(3)} m`;
   return `${mm.toFixed(2)} mm`;
+}
+
+/** Compact unit-less millimetre number for the per-axis components. */
+function num(mm: number): string {
+  return mm >= 100 ? mm.toFixed(0) : mm.toFixed(1);
 }

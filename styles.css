@@ -21,21 +21,34 @@
 }
 
 /* --- Toolbar overlay --- */
-/* View cube overlay (top-right); the toolbar stacks below it. */
-.step-viewer-viewcube {
+/* Right-side rail: view cube, roll arrows and toolbar stacked top-right. */
+.step-viewer-rail {
   position: absolute;
   top: var(--size-4-2);
   right: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--size-4-2);
+  z-index: 10;
+}
+
+.step-viewer-viewcube {
   width: 96px;
   height: 96px;
-  z-index: 10;
   cursor: pointer;
 }
 
+.step-viewer-roll {
+  display: flex;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
 .step-viewer-toolbar {
-  position: absolute;
-  top: calc(96px + 2 * var(--size-4-2));
-  right: var(--size-4-2);
   display: flex;
   flex-direction: column;
   gap: var(--size-2-1);
@@ -43,7 +56,6 @@
   border-radius: var(--radius-m);
   background-color: var(--background-secondary);
   box-shadow: var(--shadow-s);
-  z-index: 10;
 }
 
 .step-viewer-btn {

@@ -3,7 +3,7 @@ import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { stepToThree } from "../viewer/StepToThree";
 import { ViewerController } from "../viewer/ViewerController";
-import { createToolbar } from "../ui/Toolbar";
+import { createToolbar, iconButton } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
 import { PartInfoPanel } from "../ui/PartInfoPanel";
 import { ViewCube } from "../ui/ViewCube";
@@ -105,8 +105,11 @@ export class StepView extends FileView {
         treePanel.reveal(part?.object ?? null);
       };
 
-      // Navigation cube (top-right) — click a face to snap to a standard view.
-      const cube = new ViewCube(host, {
+      // Right-side rail stacks the navigation cube, roll arrows and toolbar.
+      const rail = host.createDiv({ cls: "step-viewer-rail" });
+
+      // Navigation cube — click a face to snap to a standard view.
+      const cube = new ViewCube(rail, {
         getOrientation: () => {
           const cam = controller.getCamera();
           return {
@@ -119,7 +122,16 @@ export class StepView extends FileView {
       controller.registerDisposable(cube);
       controller.onFrame = () => cube.update();
 
-      createToolbar(host, controller, {
+      // Roll arrows: rotate the model 90° about the view axis.
+      const roll = rail.createDiv({ cls: "step-viewer-roll" });
+      iconButton(roll, "rotate-ccw", "Rotate view 90° left", () =>
+        controller.rollView(-1),
+      );
+      iconButton(roll, "rotate-cw", "Rotate view 90° right", () =>
+        controller.rollView(1),
+      );
+
+      createToolbar(rail, controller, {
         treeInitiallyOpen: false,
         onToggleTree: () => {
           const open = !treePanel.el.isShown();
