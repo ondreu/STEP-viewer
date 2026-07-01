@@ -10,6 +10,8 @@ Parsing is done with [`occt-import-js`](https://www.npmjs.com/package/occt-impor
 (OpenCASCADE compiled to WASM). Built to the specification in
 [`obsidian-step-viewer-design-doc.md`](./obsidian-step-viewer-design-doc.md).
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/B7K822EW68)
+
 > **Desktop only.** The plugin targets desktop (`isDesktopOnly: true`). On
 > mobile the WASM parser can run out of memory on larger models; that is out of
 > scope for now (design doc §2.4).
