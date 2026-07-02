@@ -58,6 +58,15 @@
   box-shadow: var(--shadow-s);
 }
 
+/* Divider between toolbar groups. */
+.step-viewer-toolbar-sep {
+  align-self: center;
+  width: 60%;
+  height: 1px;
+  margin: var(--size-2-1) 0;
+  background-color: var(--background-modifier-border);
+}
+
 .step-viewer-btn {
   display: flex;
   align-items: center;
@@ -138,21 +147,22 @@
 .step-viewer-annot-tools {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: var(--size-2-1);
+  padding-bottom: var(--size-2-1);
+  border-bottom: 1px solid var(--background-modifier-border);
 }
 
 .step-viewer-annot-tool {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
@@ -162,12 +172,52 @@
 }
 
 .step-viewer-annot-tool.is-active {
-  color: var(--text-accent);
+  color: var(--text-on-accent);
+  background-color: var(--interactive-accent);
 }
 
 .step-viewer-annot-tool svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
+}
+
+/* Delete button sits at the far right of the tools row. */
+.step-viewer-annot-del {
+  margin-left: auto;
+}
+
+/* Colour swatch button + palette popover. */
+.step-viewer-annot-swatch {
+  border: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-annot-swatch:hover {
+  background-color: inherit; /* keep the swatch colour on hover */
+}
+
+.step-viewer-annot-palette {
+  display: flex;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1) 0;
+}
+
+.step-viewer-annot-palette-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.step-viewer-annot-palette-swatch:hover {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* Leader arrowhead (points at the anchor). */
+.step-viewer-leader-arrow {
+  fill: var(--text-muted);
 }
 
 .step-viewer-annot-text {
@@ -649,8 +699,39 @@
 }
 
 .step-viewer-tree-header {
-  padding: var(--size-2-2) var(--size-4-2);
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2) var(--size-2-1) var(--size-4-2);
   border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-tree-count {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.step-viewer-tree-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  margin-left: auto;
+}
+
+.step-viewer-tree-actions .step-viewer-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.step-viewer-tree-filter {
+  margin: var(--size-2-1) var(--size-2-2);
+  padding: var(--size-2-1) var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+}
+
+.step-viewer-tree-row.is-filtered-out {
+  display: none;
 }
 
 .step-viewer-tree-title {

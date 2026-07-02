@@ -43,6 +43,11 @@ export function createToolbar(
   let sectionOpen = false;
   let explodeOpen = false;
 
+  // Group 1 — camera framing.
+  iconButton(bar, "maximize", "Reset / fit camera", () => controller.resetCamera());
+  separator(bar);
+
+  // Group 2 — appearance.
   const wire = iconButton(bar, "grid", "Toggle wireframe", () => {
     controller.toggleWireframe();
     sync();
@@ -59,6 +64,9 @@ export function createToolbar(
     controller.toggleProjection();
     sync();
   });
+  separator(bar);
+
+  // Group 3 — inspect (cutaways).
   const section = iconButton(bar, "scissors", "Section plane", () => {
     sectionOpen = opts.onToggleSection();
     sync();
@@ -67,6 +75,9 @@ export function createToolbar(
     explodeOpen = opts.onToggleExplode();
     sync();
   });
+  separator(bar);
+
+  // Group 4 — measure & annotate.
   const measure = iconButton(bar, "ruler", "Measure (choose a type below)", () => {
     controller.toggleMeasure();
     sync();
@@ -79,13 +90,10 @@ export function createToolbar(
     controller.toggleAnnotate();
     sync();
   });
-  const isolate = iconButton(bar, "focus", "Isolate the selected part", () => {
-    controller.toggleIsolate();
-    sync();
-  });
-  iconButton(bar, "camera", "Screenshot to PNG", () => {
-    opts.onScreenshot();
-  });
+  separator(bar);
+
+  // Group 5 — output + panels.
+  iconButton(bar, "camera", "Screenshot to PNG", () => opts.onScreenshot());
   const annots = iconButton(bar, "messages-square", "Toggle annotations list", () => {
     annotsOpen = opts.onToggleAnnotations();
     sync();
@@ -94,12 +102,6 @@ export function createToolbar(
     treeOpen = opts.onToggleTree();
     sync();
   });
-
-  // Fit is first visually but declared last so it isn't part of the toggle row.
-  const fit = iconButton(bar, "maximize", "Reset / fit camera", () => {
-    controller.resetCamera();
-  });
-  bar.insertBefore(fit, bar.firstChild);
 
   // Measurement-type strip, shown only while measuring.
   const modeStrip = host.createDiv({ cls: "step-viewer-measure-modes" });
@@ -132,7 +134,6 @@ export function createToolbar(
     measure.toggleClass("is-active", controller.isMeasuring());
     snap.toggleClass("is-active", controller.isSnapping());
     annotate.toggleClass("is-active", controller.isAnnotating());
-    isolate.toggleClass("is-active", controller.isIsolated());
     annots.toggleClass("is-active", annotsOpen);
     tree.toggleClass("is-active", treeOpen);
 
@@ -143,6 +144,11 @@ export function createToolbar(
   sync();
 
   return bar;
+}
+
+/** A thin divider between toolbar groups. */
+function separator(parent: HTMLElement): void {
+  parent.createDiv({ cls: "step-viewer-toolbar-sep" });
 }
 
 /** Shared icon-button factory (also used for the roll arrows). */

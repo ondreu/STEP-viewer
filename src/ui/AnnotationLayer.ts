@@ -223,20 +223,39 @@ export class AnnotationLayer {
     );
     const live: Live = { data: d, pin, label, textEl };
 
-    // Category colour: a swatch that cycles through the palette.
-    const colorBtn = this.toolButton(tools, "", "Change category colour", () => {
-      const cur = d.color ?? DEFAULT_COLOR;
-      const idx = ANNOT_CATEGORIES.findIndex((c) => c.color === cur);
-      const next = ANNOT_CATEGORIES[(idx + 1) % ANNOT_CATEGORIES.length];
-      d.color = next.color;
-      colorBtn.style.background = next.color;
-      setTooltip(colorBtn, `Category: ${next.label}`, { placement: "top" });
-      this.applyVisual(live);
-      this.scheduleSave();
-      this.onChange?.();
+    // Category colour: a swatch that opens a palette popover to pick a colour.
+    const palette = activeDocument.createElement("div");
+    palette.className = "step-viewer-annot-palette";
+    palette.hide();
+    body.insertBefore(palette, linkChip);
+
+    const colorBtn = this.toolButton(tools, "", "Category colour", () => {
+      palette.toggle(!palette.isShown());
     });
     colorBtn.addClass("step-viewer-annot-swatch");
-    colorBtn.style.background = d.color ?? DEFAULT_COLOR;
+    const paintSwatch = (): void => {
+      const cur = d.color ?? DEFAULT_COLOR;
+      colorBtn.style.background = cur;
+      const cat = ANNOT_CATEGORIES.find((c) => c.color === cur);
+      setTooltip(colorBtn, `Category: ${cat?.label ?? "Note"}`, { placement: "top" });
+    };
+    for (const cat of ANNOT_CATEGORIES) {
+      const sw = activeDocument.createElement("button");
+      sw.className = "step-viewer-annot-palette-swatch";
+      sw.style.background = cat.color;
+      setTooltip(sw, cat.label, { placement: "top" });
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation();
+        d.color = cat.color;
+        palette.hide();
+        paintSwatch();
+        this.applyVisual(live);
+        this.scheduleSave();
+        this.onChange?.();
+      });
+      palette.appendChild(sw);
+    }
+    paintSwatch();
 
     // Link: toggle the input row; the chip (read state) opens the target.
     const linkBtn = this.toolButton(tools, "link", "Link to a note", () => {

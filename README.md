@@ -77,10 +77,10 @@ Download `main.js`, `manifest.json` and `styles.css` from the
   each note and the part it's attached to, with show/hide and opacity controls.
   Each note has per-note controls:
   - **Hover-only** — collapse the note to a dot and reveal the text on hover.
-  - **Leader** — place the note off to the side with a dashed leader line back
-    to its anchor point; drag the note to reposition it.
-  - **Category colour** — a swatch cycles Note / Issue / OK / Info; the list
-    panel can filter by category.
+  - **Leader** — place the note off to the side with a dashed leader line and
+    arrowhead pointing back to its anchor; drag the note to reposition it.
+  - **Category colour** — a swatch opens a palette (Note / Issue / OK / Info);
+    the list panel can filter by category.
   - **Markdown** — note text renders as Markdown in read state (click to edit).
   - **Link** — attach an Obsidian note (wikilink); a ↗ chip opens it.
 - **Screenshot** — capture the current view (model + measurement/note captions)
@@ -109,13 +109,17 @@ below the navigation cube) provides:
 | Measure | Enable measuring; pick a type from the strip that appears |
 | Snap | Snap measurement/annotation picks to corners & edges |
 | Annotate | Click a point to pin an editable note |
-| Isolate | Hide everything except the selected part |
 | Screenshot | Save a PNG of the current view next to the model |
 | Annotations | Open the annotations list panel |
 | Structure | Open the assembly structure tree |
 
-The ↶ / ↷ arrows below the cube roll the view 90°. Click a part in the structure
-tree to select (highlight) and frame it; the Isolate button then hides the rest.
+The buttons are grouped (framing · appearance · inspect · measure/annotate ·
+output/panels) with thin dividers. The ↶ / ↷ arrows below the cube roll the view
+90°.
+
+In the **structure tree**, hover a row to highlight that part in 3D, click it to
+select and frame it, and use the header controls to expand/collapse all, toggle
+all visibility, filter by name, or **isolate** the selected part (hide the rest).
 
 ### Embedding a model in a note
 

@@ -22,6 +22,9 @@ interface Item {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+// Unique per-instance marker ids so multiple embeds don't collide on url(#id).
+let markerSeq = 0;
+
 /**
  * Renders HTML labels anchored to 3D world positions, projected to screen each
  * frame (a lightweight CSS2D layer). Used for measurement numbers and
@@ -32,6 +35,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export class LabelLayer {
   private container: HTMLElement;
   private svg: SVGSVGElement;
+  private markerId = `step-leader-arrow-${markerSeq++}`;
   private items: Item[] = [];
   private v = new THREE.Vector3();
 
@@ -39,6 +43,24 @@ export class LabelLayer {
     this.container = host.createDiv({ cls: "step-viewer-labels" });
     this.svg = activeDocument.createElementNS(SVG_NS, "svg");
     this.svg.classList.add("step-viewer-leaders");
+
+    // Arrowhead marker, pointing at the anchor end of each leader line.
+    const defs = activeDocument.createElementNS(SVG_NS, "defs");
+    const marker = activeDocument.createElementNS(SVG_NS, "marker");
+    marker.setAttribute("id", this.markerId);
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "8");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", "7");
+    marker.setAttribute("markerHeight", "7");
+    marker.setAttribute("orient", "auto-start-reverse");
+    const arrow = activeDocument.createElementNS(SVG_NS, "path");
+    arrow.setAttribute("d", "M 0 1 L 9 5 L 0 9 z");
+    arrow.classList.add("step-viewer-leader-arrow");
+    marker.appendChild(arrow);
+    defs.appendChild(marker);
+    this.svg.appendChild(defs);
+
     this.container.appendChild(this.svg);
   }
 
@@ -66,6 +88,7 @@ export class LabelLayer {
   private makeLine(): SVGLineElement {
     const line = activeDocument.createElementNS(SVG_NS, "line");
     line.classList.add("step-viewer-leader-line");
+    line.setAttribute("marker-end", `url(#${this.markerId})`);
     this.svg.appendChild(line);
     return line;
   }
@@ -89,10 +112,11 @@ export class LabelLayer {
         const lx = x + off.x;
         const ly = y + off.y;
         it.el.style.transform = `translate(-50%, -50%) translate(${lx}px, ${ly}px)`;
-        it.line.setAttribute("x1", String(x));
-        it.line.setAttribute("y1", String(y));
-        it.line.setAttribute("x2", String(lx));
-        it.line.setAttribute("y2", String(ly));
+        // Draw label → anchor so the arrowhead (marker-end) points at the anchor.
+        it.line.setAttribute("x1", String(lx));
+        it.line.setAttribute("y1", String(ly));
+        it.line.setAttribute("x2", String(x));
+        it.line.setAttribute("y2", String(y));
         it.line.style.display = "";
       } else {
         it.el.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;

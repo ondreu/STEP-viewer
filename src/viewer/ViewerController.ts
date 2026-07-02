@@ -106,6 +106,7 @@ export class ViewerController {
   // Persistent selection highlight + isolate.
   private selected: THREE.Object3D | null = null;
   private selectOverlays: THREE.Mesh[] = [];
+  private previewOverlays: THREE.Mesh[] = [];
   private isolated = false;
   private isolateHidden: THREE.Object3D[] = [];
 
@@ -493,6 +494,34 @@ export class ViewerController {
 
   getSelected(): THREE.Object3D | null {
     return this.selected;
+  }
+
+  /** Transient highlight (e.g. hovering a tree row), separate from selection. */
+  previewHighlight(object: THREE.Object3D | null): void {
+    for (const o of this.previewOverlays) {
+      o.parent?.remove(o);
+      (o.material as THREE.Material).dispose();
+    }
+    this.previewOverlays = [];
+    if (!object) return;
+    object.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.userData?.[MESH_TAG]) return;
+      const mat = new THREE.MeshBasicMaterial({
+        color: HIGHLIGHT_COLOR,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+      const overlay = new THREE.Mesh(mesh.geometry, mat);
+      overlay.renderOrder = 2;
+      overlay.raycast = () => {};
+      mesh.add(overlay);
+      this.previewOverlays.push(overlay);
+    });
   }
 
   private clearSelection(): void {
