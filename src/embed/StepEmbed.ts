@@ -3,6 +3,7 @@ import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
+import { hasRenderableMeshes } from "../viewer/StepToThree";
 
 const DEFAULT_HEIGHT = 400;
 
@@ -115,8 +116,11 @@ export class StepEmbed extends MarkdownRenderChild {
       if (!this.wantMounted) return;
 
       this.host.empty();
-      if (!result.meshes || result.meshes.length === 0) {
-        this.message("This file contains no displayable geometry.");
+      if (!hasRenderableMeshes(result)) {
+        this.message(
+          `No usable geometry (${formatFileSize(file.stat.size)}). The model may be too ` +
+            "large for the in-browser parser, or use unsupported entities.",
+        );
         return;
       }
       this.viewer = mountViewer(this.host, result, {

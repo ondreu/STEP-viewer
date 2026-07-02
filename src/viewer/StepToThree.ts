@@ -33,6 +33,20 @@ export interface StepModel {
  * The caller owns the returned group and must dispose it via
  * ViewerController.disposeGroup when done.
  */
+/**
+ * True if the parse produced at least one mesh with usable geometry (positions
+ * + indices). A large model that overflows the WASM parser can come back
+ * "successful" but empty, or with meshes that carry no arrays — callers use this
+ * to show a clear error instead of mounting a blank viewer.
+ */
+export function hasRenderableMeshes(result: OcctResult): boolean {
+  return (result.meshes ?? []).some(
+    (m) =>
+      (m.attributes?.position?.array?.length ?? 0) > 0 &&
+      (m.index?.array?.length ?? 0) > 0,
+  );
+}
+
 export function stepToThree(result: OcctResult): StepModel {
   const root: OcctNode =
     result.root ?? { name: "Model", meshes: [], children: [] };

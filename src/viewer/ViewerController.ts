@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { fitCameraToObject } from "./fitCamera";
 import { EDGES_TAG, MESH_TAG } from "./StepToThree";
+import { SectionCaps } from "./SectionCaps";
 
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
@@ -98,6 +99,7 @@ export class ViewerController {
   private sectionFlip = false;
   private sectionT = 0.5;
   private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+  private sectionCaps: SectionCaps | null = null;
 
   // Explode state: per top-level part, its base local position + outward dir.
   private exploded = 0;
@@ -253,6 +255,8 @@ export class ViewerController {
     this.applyEdgesVisibility();
     this.applyTransparency();
     this.applySection();
+    if (!this.sectionCaps) this.sectionCaps = new SectionCaps(this.scene, this.sectionPlane);
+    this.sectionCaps.build(group, diag);
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
   }
@@ -383,6 +387,7 @@ export class ViewerController {
     this.sectionEnabled = on;
     this.updateSectionPlane();
     this.applySection();
+    this.sectionCaps?.setEnabled(on);
     return this.sectionEnabled;
   }
 
@@ -425,6 +430,7 @@ export class ViewerController {
     this.sectionPlane.normal.copy(n);
     // distance(p) = n·p + constant, keeps p where distance ≥ 0.
     this.sectionPlane.constant = -(n[axis] * pos);
+    this.sectionCaps?.update(box.getCenter(new THREE.Vector3()));
   }
 
   /** Apply (or clear) the clip plane on model surfaces + edges only. */
@@ -1383,6 +1389,8 @@ export class ViewerController {
     this.hovered = null;
     this.clearMeasurement(true);
     this.disposePreview();
+    this.sectionCaps?.dispose();
+    this.sectionCaps = null;
 
     if (this.model) {
       this.scene.remove(this.model);

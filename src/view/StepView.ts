@@ -3,6 +3,7 @@ import { OcctLoader } from "../viewer/OcctLoader";
 import { DEFAULT_PARAMS } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
+import { hasRenderableMeshes } from "../viewer/StepToThree";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
@@ -81,9 +82,9 @@ export class StepView extends FileView {
       }
       if (token !== this.loadToken) return;
 
-      if (!result.meshes || result.meshes.length === 0) {
+      if (!hasRenderableMeshes(result)) {
         loadingEl.remove();
-        this.showEmpty(host);
+        this.showNoGeometry(host, file.stat.size);
         return;
       }
 
@@ -121,11 +122,18 @@ export class StepView extends FileView {
     return el;
   }
 
-  private showEmpty(host: HTMLElement): void {
-    const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-empty" });
+  private showNoGeometry(host: HTMLElement, sizeBytes: number): void {
+    const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-error" });
     el.createEl("div", {
-      text: "This file contains no displayable geometry.",
+      text: "No geometry could be displayed",
       cls: "step-viewer-message",
+    });
+    el.createEl("div", {
+      text:
+        `The parser produced no usable geometry from this ${formatFileSize(sizeBytes)} ` +
+        "file. It may be too large for the in-browser (WASM) parser, or it uses " +
+        "entities the parser doesn't support.",
+      cls: "step-viewer-message-sub",
     });
   }
 

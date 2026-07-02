@@ -49,7 +49,9 @@ Download `main.js`, `manifest.json` and `styles.css` from the
 - **Perspective / orthographic** projection toggle (orthographic is often better
   for judging CAD proportions).
 - **Section plane** — a movable clipping plane (X / Y / Z axis, flip side, and a
-  position slider) that cuts into the model to inspect internal dimensions.
+  position slider) that cuts into the model to inspect internal dimensions. The
+  cut face is filled with a hatch pattern (stencil cap) so cut solids read as
+  solid rather than hollow.
 - **Explode view** — a slider that spreads an assembly's top-level parts outward
   from its centre.
 - **Isolate** — hide everything except the part selected in the structure tree.
