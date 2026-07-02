@@ -13,8 +13,16 @@ declare module "occt-import-js" {
     angularDeflection?: number;
   }
 
+  /**
+   * A flat numeric buffer. occt-import-js returns plain `number[]`, but when the
+   * parse runs in a Web Worker the arrays are converted to typed arrays before
+   * being transferred back (design: large-file support). Both are consumed by
+   * StepToThree, so the type admits either.
+   */
+  export type OcctNumberArray = number[] | Float32Array | Uint16Array | Uint32Array;
+
   export interface OcctBufferAttribute {
-    array: number[];
+    array: OcctNumberArray;
   }
 
   export interface OcctBrepFace {
@@ -72,4 +80,12 @@ declare module "occt-import-js" {
 declare module "*.wasm" {
   const data: string;
   export default data;
+}
+
+// The inline-worker esbuild plugin bundles `import code from "./x?worker"` into
+// the worker's full IIFE source as a string, which OcctLoader turns into a
+// Blob-URL Worker (keeps the plugin self-contained; no separate worker file).
+declare module "*?worker" {
+  const code: string;
+  export default code;
 }

@@ -5,6 +5,7 @@
 export type {
   OcctReadParams,
   OcctBufferAttribute,
+  OcctNumberArray,
   OcctBrepFace,
   OcctMesh,
   OcctNode,

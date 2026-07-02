@@ -1,9 +1,16 @@
 import * as THREE from "three";
-import { OcctMesh, OcctNode, OcctResult } from "../types";
+import { OcctMesh, OcctNode, OcctNumberArray, OcctResult } from "../types";
 
 const DEFAULT_COLOR = 0xcccccc;
 const EDGE_COLOR = 0x222222;
 const EDGE_THRESHOLD_ANGLE = 30; // degrees; hides coplanar-triangle diagonals
+
+/**
+ * Above this many triangles we skip the per-mesh edge overlay. `EdgesGeometry`
+ * roughly doubles a mesh's geometry memory and CPU, which on a large model (the
+ * kind that already strains memory) is the difference between opening and not.
+ */
+const EDGE_TRIANGLE_BUDGET = 1_500_000;
 
 /** userData flags used by ViewerController to toggle features. */
 export const MESH_TAG = "step-mesh";
@@ -60,16 +67,28 @@ export function stepToThree(result: OcctResult): StepModel {
     ? root
     : { ...root, meshes: result.meshes.map((_, i) => i) };
 
-  const tree = buildNode(effectiveRoot, result.meshes, "Model");
+  // Building the edge overlay per mesh is expensive; skip it wholesale on very
+  // large models so they still open (the edges toggle simply has nothing to show).
+  const withEdges = totalTriangles(result.meshes) <= EDGE_TRIANGLE_BUDGET;
+
+  const tree = buildNode(effectiveRoot, result.meshes, "Model", withEdges);
   const group = tree.object as THREE.Group;
   group.name = "step-model";
   return { group, tree };
+}
+
+/** Total triangle count across all meshes (index length / 3). */
+function totalTriangles(meshes: OcctMesh[]): number {
+  let n = 0;
+  for (const m of meshes ?? []) n += (m.index?.array?.length ?? 0) / 3;
+  return n;
 }
 
 function buildNode(
   node: OcctNode,
   meshes: OcctMesh[],
   fallbackName: string,
+  withEdges: boolean,
 ): StepTreeNode {
   const group = new THREE.Group();
   group.name = node.name || fallbackName;
@@ -79,7 +98,7 @@ function buildNode(
   for (const meshIndex of node.meshes ?? []) {
     const occtMesh = meshes[meshIndex];
     if (!occtMesh) continue;
-    const built = buildMesh(occtMesh);
+    const built = buildMesh(occtMesh, withEdges);
     if (!built) continue;
     group.add(built);
     children.push({
@@ -90,7 +109,7 @@ function buildNode(
   }
 
   for (const child of node.children ?? []) {
-    const childNode = buildNode(child, meshes, "Part");
+    const childNode = buildNode(child, meshes, "Part", withEdges);
     group.add(childNode.object);
     children.push(childNode);
   }
@@ -98,7 +117,7 @@ function buildNode(
   return { name: group.name, object: group, children };
 }
 
-function buildMesh(mesh: OcctMesh): THREE.Mesh | null {
+function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
   const positions = mesh.attributes?.position?.array;
   const indices = mesh.index?.array;
   if (!positions || positions.length === 0 || !indices || indices.length === 0) {
@@ -108,14 +127,14 @@ function buildMesh(mesh: OcctMesh): THREE.Mesh | null {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
-    new THREE.Float32BufferAttribute(new Float32Array(positions), 3),
+    new THREE.Float32BufferAttribute(asFloat32(positions), 3),
   );
 
   const normals = mesh.attributes?.normal?.array;
   if (normals && normals.length === positions.length) {
     geometry.setAttribute(
       "normal",
-      new THREE.Float32BufferAttribute(new Float32Array(normals), 3),
+      new THREE.Float32BufferAttribute(asFloat32(normals), 3),
     );
   }
 
@@ -131,15 +150,17 @@ function buildMesh(mesh: OcctMesh): THREE.Mesh | null {
   threeMesh.name = mesh.name || "mesh";
   threeMesh.userData[MESH_TAG] = true;
 
-  // Edges as a toggleable child (design doc §7.1).
-  const edgesGeom = new THREE.EdgesGeometry(geometry, EDGE_THRESHOLD_ANGLE);
-  const edgesMat = new THREE.LineBasicMaterial({ color: EDGE_COLOR });
-  const edges = new THREE.LineSegments(edgesGeom, edgesMat);
-  edges.name = "edges";
-  edges.userData[EDGES_TAG] = true;
-  // Raycasting for measurement must ignore edge lines; only meshes are picked.
-  edges.raycast = () => {};
-  threeMesh.add(edges);
+  // Edges as a toggleable child (design doc §7.1) — skipped on huge models.
+  if (withEdges) {
+    const edgesGeom = new THREE.EdgesGeometry(geometry, EDGE_THRESHOLD_ANGLE);
+    const edgesMat = new THREE.LineBasicMaterial({ color: EDGE_COLOR });
+    const edges = new THREE.LineSegments(edgesGeom, edgesMat);
+    edges.name = "edges";
+    edges.userData[EDGES_TAG] = true;
+    // Raycasting for measurement must ignore edge lines; only meshes are picked.
+    edges.raycast = () => {};
+    threeMesh.add(edges);
+  }
 
   return threeMesh;
 }
@@ -193,8 +214,20 @@ function standardMaterial(
   });
 }
 
-/** Choose the smallest index type that fits the vertex count. */
-function indexArray(indices: number[]): Uint16Array | Uint32Array {
+/** Use the occt buffer as a Float32Array, avoiding a copy if it already is one. */
+function asFloat32(a: OcctNumberArray): Float32Array {
+  return a instanceof Float32Array ? a : new Float32Array(a);
+}
+
+/**
+ * Choose an index buffer. When the parse ran in the worker the indices already
+ * arrive as a typed array (Uint32Array), which we use as-is; otherwise we pick
+ * the smallest type that fits the max vertex index.
+ */
+function indexArray(indices: OcctNumberArray): Uint16Array | Uint32Array {
+  if (indices instanceof Uint32Array || indices instanceof Uint16Array) {
+    return indices;
+  }
   let max = 0;
   for (const i of indices) if (i > max) max = i;
   return max > 65535 ? new Uint32Array(indices) : new Uint16Array(indices);

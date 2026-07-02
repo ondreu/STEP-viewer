@@ -28,8 +28,15 @@ export interface StepMeta {
 
 const EMPTY: StepMeta = { materialFor: () => undefined, allMaterials: [] };
 
+/**
+ * Above this size we don't extract metadata: the entity/adjacency graph would
+ * be huge and the material heuristic unreliable. Callers also use this to avoid
+ * decoding the whole file to a (very large) string in the first place.
+ */
+export const METADATA_MAX_BYTES = 40_000_000;
+
 export function parseStepMeta(text: string): StepMeta {
-  if (!text || text.length > 40_000_000) return EMPTY; // skip parsing huge files
+  if (!text || text.length > METADATA_MAX_BYTES) return EMPTY; // skip huge files
   try {
     return build(text);
   } catch (err) {

@@ -1,9 +1,13 @@
 import { MarkdownRenderChild, Plugin, TFile } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
-import { DEFAULT_PARAMS } from "../viewer/params";
+import { paramsForFile, Quality } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes } from "../viewer/StepToThree";
+import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
+import { HasStepSettings } from "../settings";
+
+const QUALITIES = new Set<Quality>(["auto", "high", "balanced", "low"]);
 
 const DEFAULT_HEIGHT = 400;
 
@@ -37,7 +41,7 @@ export class StepEmbed extends MarkdownRenderChild {
 
   constructor(
     containerEl: HTMLElement,
-    private plugin: Plugin,
+    private plugin: Plugin & HasStepSettings,
     private source: string,
     private sourcePath: string,
   ) {
@@ -109,9 +113,18 @@ export class StepEmbed extends MarkdownRenderChild {
 
       const buffer = await this.plugin.app.vault.readBinary(file);
       const bytes = new Uint8Array(buffer);
-      const occt = await OcctLoader.get();
-      const result = occt.ReadStepFile(bytes, DEFAULT_PARAMS);
-      if (!result || !result.success) throw new Error("Could not parse STEP file.");
+      // Decode text for metadata before parsing (the worker transfers the byte
+      // buffer); skip decoding large files, whose metadata is skipped anyway.
+      const stepText =
+        bytes.length > METADATA_MAX_BYTES
+          ? undefined
+          : new TextDecoder("latin1").decode(bytes);
+
+      const quality = this.opts.quality ?? this.plugin.settings.quality;
+      const result = await OcctLoader.parseStep(
+        bytes,
+        paramsForFile(file.stat.size, quality),
+      );
 
       // Scrolled away (or unloaded) while we were parsing — bail out.
       if (!this.wantMounted) return;
@@ -130,7 +143,7 @@ export class StepEmbed extends MarkdownRenderChild {
         showAnnotations: this.opts.showAnnotations,
         initialView: this.opts.view,
         initialRoll: this.opts.roll,
-        stepText: new TextDecoder("latin1").decode(bytes),
+        stepText,
       });
     } catch (err) {
       console.error("[STEP Viewer] Embed failed", this.linktext, err);
@@ -199,6 +212,7 @@ interface ParsedSource {
   showAnnotations?: boolean;
   view?: string;
   roll?: number;
+  quality?: Quality;
 }
 
 const VIEW_NAMES = new Set(["front", "back", "left", "right", "top", "bottom", "iso"]);
@@ -228,6 +242,9 @@ function parseSource(source: string): ParsedSource {
       } else if (key === "rotate") {
         const deg = parseInt(value, 10);
         if (!Number.isNaN(deg)) out.roll = ((Math.round(deg / 90) % 4) + 4) % 4;
+      } else if (key === "quality") {
+        const q = value.toLowerCase() as Quality;
+        if (QUALITIES.has(q)) out.quality = q;
       }
     } else if (!out.path) {
       out.path = stripLink(line); // a bare line is treated as the path
