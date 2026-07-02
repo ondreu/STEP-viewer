@@ -1,7 +1,7 @@
 {
   "id": "step-viewer",
   "name": "STEP Viewer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "minAppVersion": "1.5.0",
   "description": "Open and view STEP (.step/.stp) CAD models in an interactive 3D viewer.",
   "author": "Ondřej Uhnávy",
