@@ -18,6 +18,16 @@ Parsing is done with [`occt-import-js`](https://www.npmjs.com/package/occt-impor
 > memory on large models in the mobile webview, opening a large file first
 > shows a warning you can dismiss to continue (design doc §2.4).
 
+## Screenshots
+
+![1](assets/1.png)
+
+![2](assets/2.png)
+
+![3](assets/3.png)
+
+![4](assets/4.png)
+
 ## Install
 
 This plugin isn't in the community store yet. Install the beta with
