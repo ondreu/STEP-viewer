@@ -1,8 +1,8 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { STEP_VIEW_TYPE, StepView } from "./view/StepView";
 import { StepEmbed } from "./embed/StepEmbed";
 import { StepViewerSettings, DEFAULT_SETTINGS } from "./settings";
-import { Quality } from "./viewer/params";
+import { Profile, QualityTier, tiersForProfile } from "./viewer/params";
 
 /**
  * STEP Viewer plugin entry point (design doc §5.1).
@@ -34,6 +34,11 @@ export default class StepViewerPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as Partial<StepViewerSettings> | null;
     this.stepSettings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
+    // A malformed/empty stored tier list would silently disable size scaling.
+    if (!Array.isArray(this.stepSettings.tiers) || this.stepSettings.tiers.length === 0) {
+      this.stepSettings.tiers = tiersForProfile("fastest");
+      this.stepSettings.profile = "fastest";
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -43,12 +48,25 @@ export default class StepViewerPlugin extends Plugin {
   // onunload: Obsidian de-registers views/extensions registered via this.register*
 }
 
-const QUALITY_OPTIONS: Record<Quality, string> = {
-  auto: "Auto (coarser for large files)",
-  high: "High (finest, small files)",
+const PROFILE_LABELS: Record<Profile, string> = {
+  fastest: "Fastest (lightest, most angular)",
   balanced: "Balanced",
-  low: "Low (coarsest, huge files)",
+  detailed: "Detailed (slowest, finest)",
+  custom: "Custom",
 };
+
+/**
+ * Keep tiers sane: finite breakpoints sorted ascending, then exactly one
+ * catch-all (maxMB = null) last. Synthesises a catch-all if the user deleted it.
+ */
+function normalizeTiers(tiers: QualityTier[]): QualityTier[] {
+  const finite = tiers
+    .filter((t) => t.maxMB != null)
+    .sort((a, b) => (a.maxMB as number) - (b.maxMB as number));
+  const catchAll = tiers.find((t) => t.maxMB == null);
+  finite.push({ maxMB: null, deflection: catchAll?.deflection ?? 0.1 });
+  return finite;
+}
 
 class StepViewerSettingTab extends PluginSettingTab {
   constructor(
@@ -58,25 +76,110 @@ class StepViewerSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
+  private async commit(profile: Profile): Promise<void> {
+    this.plugin.stepSettings.profile = profile;
+    this.plugin.stepSettings.tiers = normalizeTiers(this.plugin.stepSettings.tiers);
+    await this.plugin.saveSettings();
+    this.display();
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    const s = this.plugin.stepSettings;
 
     new Setting(containerEl)
-      .setName("Mesh quality")
+      .setName("Performance profile")
       .setDesc(
-        "Detail of the generated 3D mesh. Large models can exceed the parser's " +
-          "memory at the finest setting; “Auto” coarsens the mesh as files grow " +
-          "so big models still open. Reopen a model for changes to take effect.",
+        "How aggressively mesh detail is reduced as files grow. The viewer " +
+          "favours speed and lightness over fidelity — pick “Detailed” for finer " +
+          "meshes on capable machines. Reopen a model for changes to take effect.",
       )
       .addDropdown((dd) => {
-        for (const [value, label] of Object.entries(QUALITY_OPTIONS)) {
+        for (const [value, label] of Object.entries(PROFILE_LABELS)) {
           dd.addOption(value, label);
         }
-        dd.setValue(this.plugin.stepSettings.quality).onChange(async (value) => {
-          this.plugin.stepSettings.quality = value as Quality;
-          await this.plugin.saveSettings();
+        dd.setValue(s.profile).onChange(async (value) => {
+          const p = value as Profile;
+          if (p !== "custom") this.plugin.stepSettings.tiers = tiersForProfile(p);
+          await this.commit(p);
         });
       });
+
+    // --- Advanced: size → coarseness table ---------------------------------
+    new Setting(containerEl).setName("Advanced: quality by file size").setHeading();
+    containerEl.createEl("p", {
+      text:
+        "Each row: files up to the given size use that coarseness. Coarseness is " +
+        "a bounding-box ratio — higher = fewer triangles = faster and more " +
+        "angular (e.g. 0.005 fairly fine, 0.05 coarse). Editing switches the " +
+        "profile to Custom.",
+      cls: "setting-item-description",
+    });
+
+    s.tiers.forEach((tier, i) => {
+      const isCatchAll = tier.maxMB == null;
+      const row = new Setting(containerEl);
+      row.setName(isCatchAll ? "Larger files" : `Files up to (MB)`);
+
+      if (!isCatchAll) {
+        row.addText((t) =>
+          t
+            .setPlaceholder("MB")
+            .setValue(String(tier.maxMB))
+            .onChange(async (v) => {
+              const n = parseFloat(v);
+              if (!isFinite(n) || n <= 0) return; // ignore until valid
+              this.plugin.stepSettings.tiers[i].maxMB = n;
+              await this.commit("custom");
+            }),
+        );
+      }
+
+      row.addText((t) =>
+        t
+          .setPlaceholder("coarseness")
+          .setValue(String(tier.deflection))
+          .onChange(async (v) => {
+            const n = parseFloat(v);
+            if (!isFinite(n) || n <= 0 || n > 1) return; // ignore until valid
+            this.plugin.stepSettings.tiers[i].deflection = n;
+            await this.commit("custom");
+          }),
+      );
+
+      if (!isCatchAll) {
+        row.addExtraButton((b) =>
+          b
+            .setIcon("trash")
+            .setTooltip("Remove this tier")
+            .onClick(async () => {
+              this.plugin.stepSettings.tiers.splice(i, 1);
+              await this.commit("custom");
+            }),
+        );
+      }
+    });
+
+    new Setting(containerEl).addButton((b) =>
+      b.setButtonText("Add tier").onClick(async () => {
+        // Insert a new breakpoint just below the catch-all.
+        const finite = s.tiers.filter((t) => t.maxMB != null);
+        const lastMB = finite.length ? (finite[finite.length - 1].maxMB as number) : 10;
+        this.plugin.stepSettings.tiers.push({ maxMB: lastMB * 2, deflection: 0.02 });
+        await this.commit("custom");
+      }),
+    );
+
+    new Setting(containerEl).addButton((b) =>
+      b
+        .setButtonText("Reset to Fastest")
+        .setWarning()
+        .onClick(async () => {
+          this.plugin.stepSettings.tiers = tiersForProfile("fastest");
+          await this.commit("fastest");
+          new Notice("STEP Viewer: quality reset to Fastest.");
+        }),
+    );
   }
 }

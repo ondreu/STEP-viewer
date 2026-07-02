@@ -1,13 +1,18 @@
 import { MarkdownRenderChild, Plugin, TFile } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
-import { paramsForFile, Quality } from "../viewer/params";
+import {
+  Profile,
+  deflectionForSize,
+  paramsForDeflection,
+  tiersForProfile,
+} from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
 import { HasStepSettings } from "../settings";
 
-const QUALITIES = new Set<Quality>(["auto", "high", "balanced", "low"]);
+const EMBED_PROFILES = new Set<Profile>(["fastest", "balanced", "detailed"]);
 
 const DEFAULT_HEIGHT = 400;
 
@@ -25,6 +30,7 @@ const DEFAULT_HEIGHT = 400;
  *   view: front          # front/back/left/right/top/bottom/iso
  *   rotate: 90           # initial roll in degrees (or `roll: 1` in quarter turns)
  *   annotations: false   # hide saved notes in this embed (default true)
+ *   quality: detailed    # fastest/balanced/detailed, or a coarseness like 0.01
  *   ```
  * `path` may be a wikilink target or a vault-relative path. A bare first line is
  * also accepted as the path.
@@ -120,10 +126,9 @@ export class StepEmbed extends MarkdownRenderChild {
           ? undefined
           : new TextDecoder("latin1").decode(bytes);
 
-      const quality = this.opts.quality ?? this.plugin.stepSettings.quality;
       const { result } = await OcctLoader.parseStep(
         bytes,
-        paramsForFile(file.stat.size, quality),
+        paramsForDeflection(this.deflectionFor(file.stat.size)),
       );
 
       // Scrolled away (or unloaded) while we were parsing — bail out.
@@ -151,6 +156,18 @@ export class StepEmbed extends MarkdownRenderChild {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Resolve the mesh coarseness for this embed: an explicit `quality:` override
+   * (a profile name or a raw deflection number) wins, otherwise the global
+   * size-based tiers apply.
+   */
+  private deflectionFor(sizeBytes: number): number {
+    const q = this.opts.quality;
+    if (typeof q === "number") return q;
+    if (q) return deflectionForSize(sizeBytes, tiersForProfile(q));
+    return deflectionForSize(sizeBytes, this.plugin.stepSettings.tiers);
   }
 
   private resolveFile(linktext: string): TFile | null {
@@ -212,7 +229,8 @@ interface ParsedSource {
   showAnnotations?: boolean;
   view?: string;
   roll?: number;
-  quality?: Quality;
+  /** Per-embed override: a profile name or a raw coarseness (deflection). */
+  quality?: Exclude<Profile, "custom"> | number;
 }
 
 const VIEW_NAMES = new Set(["front", "back", "left", "right", "top", "bottom", "iso"]);
@@ -243,8 +261,11 @@ function parseSource(source: string): ParsedSource {
         const deg = parseInt(value, 10);
         if (!Number.isNaN(deg)) out.roll = ((Math.round(deg / 90) % 4) + 4) % 4;
       } else if (key === "quality") {
-        const q = value.toLowerCase() as Quality;
-        if (QUALITIES.has(q)) out.quality = q;
+        // A profile name (fastest/balanced/detailed) or a raw coarseness number.
+        const num = parseFloat(value);
+        const prof = value.toLowerCase() as Profile;
+        if (isFinite(num) && num > 0 && num <= 1) out.quality = num;
+        else if (EMBED_PROFILES.has(prof)) out.quality = prof as Exclude<Profile, "custom">;
       }
     } else if (!out.path) {
       out.path = stripLink(line); // a bare line is treated as the path

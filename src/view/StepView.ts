@@ -1,6 +1,10 @@
 import { FileView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
-import { paramsForFile, Quality } from "../viewer/params";
+import {
+  deflectionForSize,
+  paramsForDeflection,
+  coarserDeflection,
+} from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes } from "../viewer/StepToThree";
@@ -81,10 +85,12 @@ export class StepView extends FileView {
     file: TFile,
     host: HTMLElement,
     token: number,
-    qualityOverride?: Quality,
+    deflectionOverride?: number,
   ): Promise<void> {
     const loadingEl = this.showLoading(host);
-    const quality = qualityOverride ?? this.plugin.stepSettings.quality;
+    const deflection =
+      deflectionOverride ??
+      deflectionForSize(file.stat.size, this.plugin.stepSettings.tiers);
 
     try {
       const buffer = await this.app.vault.readBinary(file);
@@ -95,13 +101,15 @@ export class StepView extends FileView {
       // (neutralises) the byte buffer, and large files skip decoding entirely.
       const stepText = decodeStep(bytes);
 
-      const params = paramsForFile(file.stat.size, quality);
-      const { result, logs } = await OcctLoader.parseStep(bytes, params);
+      const { result, logs } = await OcctLoader.parseStep(
+        bytes,
+        paramsForDeflection(deflection),
+      );
       if (token !== this.loadToken) return;
 
       if (!hasRenderableMeshes(result)) {
         loadingEl.remove();
-        this.showNoGeometry(host, file, token, quality, logs);
+        this.showNoGeometry(host, file, token, deflection, logs);
         return;
       }
 
@@ -114,15 +122,20 @@ export class StepView extends FileView {
     } catch (err) {
       if (token !== this.loadToken) return;
       loadingEl.remove();
-      this.showError(host, file, err, token, quality);
+      this.showError(host, file, err, token, deflection);
     }
   }
 
-  /** Re-parse the file at the coarsest quality, e.g. after an out-of-memory failure. */
-  private retryLowQuality(file: TFile, host: HTMLElement, token: number): void {
+  /** Re-parse coarser (faster/lighter), e.g. after an out-of-memory failure. */
+  private retryFaster(
+    file: TFile,
+    host: HTMLElement,
+    token: number,
+    deflection: number,
+  ): void {
     if (token !== this.loadToken) return;
     host.empty();
-    void this.parseAndMount(file, host, token, "low");
+    void this.parseAndMount(file, host, token, coarserDeflection(deflection));
   }
 
   async onUnloadFile(): Promise<void> {
@@ -151,7 +164,7 @@ export class StepView extends FileView {
     host: HTMLElement,
     file: TFile,
     token: number,
-    quality: Quality,
+    deflection: number,
     logs: string[] = [],
   ): void {
     const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-error" });
@@ -162,7 +175,7 @@ export class StepView extends FileView {
     // If OCCT's output hints at an allocation failure, say so plainly — that's
     // the memory ceiling, not an unsupported file.
     const outOfMemory = logs.some((l) => /memory|alloc|bad_alloc|out of/i.test(l));
-    const canRetry = quality !== "low";
+    const canRetry = coarserDeflection(deflection) > deflection;
     const detail = outOfMemory
       ? `This ${formatFileSize(file.stat.size)} model ran the in-browser (WASM) parser ` +
         "out of memory before it could produce geometry."
@@ -170,24 +183,25 @@ export class StepView extends FileView {
         "file. It may be too large for the in-browser (WASM) parser, or it uses " +
         "entities the parser doesn't support.";
     el.createEl("div", {
-      text: detail + (canRetry ? " Retrying at a lower quality may help." : ""),
+      text: detail + (canRetry ? " Retrying coarser (faster) may help." : ""),
       cls: "step-viewer-message-sub",
     });
-    if (canRetry) this.addRetryButton(el, file, host, token);
+    if (canRetry) this.addRetryButton(el, file, host, token, deflection);
   }
 
-  /** A button that re-parses at the coarsest quality (memory recovery). */
+  /** A button that re-parses coarser/faster (memory & speed recovery). */
   private addRetryButton(
     parent: HTMLElement,
     file: TFile,
     host: HTMLElement,
     token: number,
+    deflection: number,
   ): void {
     const btn = parent.createEl("button", {
-      text: "Try lower quality",
+      text: "Try coarser (faster)",
       cls: "mod-cta",
     });
-    btn.addEventListener("click", () => this.retryLowQuality(file, host, token));
+    btn.addEventListener("click", () => this.retryFaster(file, host, token, deflection));
   }
 
   private showLargeWarning(
@@ -210,7 +224,7 @@ export class StepView extends FileView {
     file: TFile,
     err: unknown,
     token: number,
-    quality: Quality,
+    deflection: number,
   ): void {
     // Log full detail to the console; show the user a clean message (design §8).
     console.error("[STEP Viewer] Failed to open", file.path, err);
@@ -222,7 +236,9 @@ export class StepView extends FileView {
     const detail = err instanceof Error ? err.message : String(err);
     el.createEl("div", { text: detail, cls: "step-viewer-message-sub" });
     // A parse failure on a large model is often memory exhaustion — offer a
-    // coarser retry unless we're already at the lowest quality.
-    if (quality !== "low") this.addRetryButton(el, file, host, token);
+    // coarser/faster retry unless we're already at the coarsest.
+    if (coarserDeflection(deflection) > deflection) {
+      this.addRetryButton(el, file, host, token, deflection);
+    }
   }
 }
