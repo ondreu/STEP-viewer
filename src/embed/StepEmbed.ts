@@ -10,6 +10,7 @@ import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
+import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache";
 import { HasStepSettings } from "../settings";
 
 const EMBED_PROFILES = new Set<Profile>(["fastest", "balanced", "detailed"]);
@@ -117,6 +118,28 @@ export class StepEmbed extends MarkdownRenderChild {
       loading.createDiv({ cls: "step-viewer-spinner" });
       loading.createEl("div", { text: "Loading STEP…", cls: "step-viewer-message" });
 
+      const settings = this.plugin.stepSettings;
+      const deflection = this.deflectionFor(file.stat.size);
+      const useCache = settings.cacheEnabled && file.stat.size >= CACHE_MIN_BYTES;
+      const key = cacheKey(file.path, file.stat.mtime, file.stat.size, deflection);
+
+      // Fast path: reuse previously parsed geometry (skips OCCT).
+      if (useCache) {
+        const cached = await this.plugin.geometryCache.get(key);
+        if (!this.wantMounted) return;
+        if (cached && hasRenderableMeshes(cached)) {
+          this.host.empty();
+          this.viewer = mountViewer(this.host, cached, {
+            plugin: this.plugin,
+            filePath: file.path,
+            showAnnotations: this.opts.showAnnotations,
+            initialView: this.opts.view,
+            initialRoll: this.opts.roll,
+          });
+          return;
+        }
+      }
+
       const buffer = await this.plugin.app.vault.readBinary(file);
       const bytes = new Uint8Array(buffer);
       // Decode text for metadata before parsing (the worker transfers the byte
@@ -128,7 +151,7 @@ export class StepEmbed extends MarkdownRenderChild {
 
       const { result } = await OcctLoader.parseStep(
         bytes,
-        paramsForDeflection(this.deflectionFor(file.stat.size)),
+        paramsForDeflection(deflection),
       );
 
       // Scrolled away (or unloaded) while we were parsing — bail out.
@@ -142,6 +165,15 @@ export class StepEmbed extends MarkdownRenderChild {
         );
         return;
       }
+
+      if (useCache) {
+        const cache = this.plugin.geometryCache;
+        const maxBytes = settings.cacheMaxMB * 1024 * 1024;
+        void cache
+          .put(key, result, resultBytes(result))
+          .then(() => cache.enforceCap(maxBytes));
+      }
+
       this.viewer = mountViewer(this.host, result, {
         plugin: this.plugin,
         filePath: file.path,

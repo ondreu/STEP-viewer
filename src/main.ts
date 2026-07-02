@@ -3,6 +3,7 @@ import { STEP_VIEW_TYPE, StepView } from "./view/StepView";
 import { StepEmbed } from "./embed/StepEmbed";
 import { StepViewerSettings, DEFAULT_SETTINGS } from "./settings";
 import { Profile, QualityTier, tiersForProfile } from "./viewer/params";
+import { GeometryCache } from "./viewer/GeometryCache";
 
 /**
  * STEP Viewer plugin entry point (design doc §5.1).
@@ -17,6 +18,8 @@ export default class StepViewerPlugin extends Plugin {
   // Named `stepSettings`, not `settings`: Obsidian 1.13 added an official
   // `Plugin.settings`, and reusing that name collides with it.
   stepSettings: StepViewerSettings = { ...DEFAULT_SETTINGS };
+  // Shared across views/embeds; parsed-geometry cache (IndexedDB, off-vault).
+  geometryCache = new GeometryCache();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -181,5 +184,54 @@ class StepViewerSettingTab extends PluginSettingTab {
           new Notice("STEP Viewer: quality reset to Fastest.");
         }),
     );
+
+    // --- Cache -------------------------------------------------------------
+    new Setting(containerEl).setName("Cache").setHeading();
+    containerEl.createEl("p", {
+      text:
+        "Parsing a large model is slow, so its geometry is cached on disk and " +
+        "reused when you reopen it (near-instant). The cache lives outside the " +
+        "vault (IndexedDB), so it is never synced. Editing a file or changing " +
+        "quality re-parses it. Only files ≥ 15 MB are cached.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Cache parsed models")
+      .addToggle((t) =>
+        t.setValue(s.cacheEnabled).onChange(async (v) => {
+          this.plugin.stepSettings.cacheEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Max cache size (MB)")
+      .setDesc("Oldest entries are evicted once the cache exceeds this.")
+      .addText((t) =>
+        t.setValue(String(s.cacheMaxMB)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n > 0) {
+            this.plugin.stepSettings.cacheMaxMB = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
+    void this.plugin.geometryCache.totalBytes().then((bytes) => {
+      new Setting(containerEl)
+        .setName("Clear cache")
+        .setDesc(`Currently using ${(bytes / (1024 * 1024)).toFixed(1)} MB.`)
+        .addButton((b) =>
+          b
+            .setButtonText("Clear cache")
+            .setWarning()
+            .onClick(async () => {
+              await this.plugin.geometryCache.clear();
+              new Notice("STEP Viewer: cache cleared.");
+              this.display();
+            }),
+        );
+    });
   }
 }

@@ -5,6 +5,7 @@ import {
   paramsForDeflection,
   coarserDeflection,
 } from "../viewer/params";
+import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes } from "../viewer/StepToThree";
@@ -88,11 +89,29 @@ export class StepView extends FileView {
     deflectionOverride?: number,
   ): Promise<void> {
     const loadingEl = this.showLoading(host);
+    const settings = this.plugin.stepSettings;
     const deflection =
-      deflectionOverride ??
-      deflectionForSize(file.stat.size, this.plugin.stepSettings.tiers);
+      deflectionOverride ?? deflectionForSize(file.stat.size, settings.tiers);
+    const useCache =
+      settings.cacheEnabled && file.stat.size >= CACHE_MIN_BYTES;
+    const key = cacheKey(file.path, file.stat.mtime, file.stat.size, deflection);
 
     try {
+      // Fast path: reload previously parsed geometry, skipping OCCT entirely.
+      if (useCache) {
+        const cached = await this.plugin.geometryCache.get(key);
+        if (token !== this.loadToken) return;
+        if (cached && hasRenderableMeshes(cached)) {
+          console.info("[STEP Viewer] cache hit", file.path);
+          loadingEl.remove();
+          this.viewer = mountViewer(host, cached, {
+            plugin: this.plugin,
+            filePath: file.path,
+          });
+          return;
+        }
+      }
+
       const buffer = await this.app.vault.readBinary(file);
       if (token !== this.loadToken) return; // superseded by a newer load
 
@@ -111,6 +130,14 @@ export class StepView extends FileView {
         loadingEl.remove();
         this.showNoGeometry(host, file, token, deflection, logs);
         return;
+      }
+
+      if (useCache) {
+        const cache = this.plugin.geometryCache;
+        const maxBytes = settings.cacheMaxMB * 1024 * 1024;
+        void cache
+          .put(key, result, resultBytes(result))
+          .then(() => cache.enforceCap(maxBytes));
       }
 
       loadingEl.remove();
