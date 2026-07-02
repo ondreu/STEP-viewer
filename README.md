@@ -54,12 +54,19 @@ Download `main.js`, `manifest.json` and `styles.css` from the
 - **Distance measurement** — click two points for the straight-line distance
   **plus per-axis X / Y / Z components**, shown in the readout, as colour-coded
   axis legs and as numbers beside each line.
+- **Pinned measurements** — press the 📌 **pin** button in the readout to keep a
+  measurement. Pinned measurements are parented to the model (so they follow
+  rolls) and are saved per file; each has a distance label with a delete button.
 - **Snap to corners / edges** — the magnet toggle snaps both measurement and
   annotation picks to the nearest visible vertex/edge, with a live preview
   marker (green when snapping, orange when free).
 - **Annotations** — pin editable notes to points on the model; they follow the
   part through rolls and are saved per file. An annotations list panel shows
   each note and the part it's attached to, with show/hide and opacity controls.
+  Each note has two per-note display toggles:
+  - **Hover-only** — collapse the note to a dot and reveal the text on hover.
+  - **Leader** — place the note off to the side with a dashed leader line back
+    to its anchor point; drag the note's toolbar strip to reposition it.
 - **Note embeds** — render a model inline in any note (see below).
 
 > **Measurement and annotations are approximate.** They run against the

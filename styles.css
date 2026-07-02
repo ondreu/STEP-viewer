@@ -128,6 +128,48 @@
   pointer-events: auto;
 }
 
+.step-viewer-annot-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-1);
+  min-width: 0;
+}
+
+.step-viewer-annot-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--size-2-1);
+}
+
+.step-viewer-annot-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.step-viewer-annot-tool:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+.step-viewer-annot-tool.is-active {
+  color: var(--text-accent);
+}
+
+.step-viewer-annot-tool svg {
+  width: 13px;
+  height: 13px;
+}
+
 .step-viewer-annot-text {
   min-width: 60px;
   font-size: var(--font-ui-smaller);
@@ -144,8 +186,8 @@
 
 .step-viewer-annot-del {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   line-height: 1;
   border: none;
@@ -165,6 +207,122 @@
 }
 
 .step-viewer-annot.is-flash {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* Collapsed marker used in hover-only mode. */
+.step-viewer-annot-dot {
+  display: none;
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background-color: #ffc531;
+  box-shadow: 0 0 0 2px var(--background-primary);
+}
+
+/* Hover-only: collapse to just the dot; expand the note on hover. */
+.step-viewer-annot.is-hover-only {
+  padding: 0;
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.step-viewer-annot.is-hover-only .step-viewer-annot-dot {
+  display: block;
+}
+
+.step-viewer-annot.is-hover-only .step-viewer-annot-body {
+  display: none;
+}
+
+.step-viewer-annot.is-hover-only:hover {
+  padding: var(--size-2-1) var(--size-2-2);
+  border-color: var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
+.step-viewer-annot.is-hover-only:hover .step-viewer-annot-dot {
+  display: none;
+}
+
+.step-viewer-annot.is-hover-only:hover .step-viewer-annot-body {
+  display: flex;
+}
+
+/* Leader mode: the toolbar strip doubles as a drag handle. */
+.step-viewer-annot.is-leader .step-viewer-annot-tools {
+  cursor: move;
+}
+
+.step-viewer-annot.is-dragging {
+  opacity: 0.85;
+  user-select: none;
+}
+
+/* Leader connector lines (drawn behind the labels). */
+.step-viewer-leaders {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.step-viewer-leader-line {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.85;
+}
+
+/* Pinned (persistent) measurement labels. */
+.step-viewer-mpinned {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  padding: 1px var(--size-2-1) 1px var(--size-2-2);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.step-viewer-mpinned-text {
+  color: #ff5500;
+}
+
+.step-viewer-mpinned-del {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.step-viewer-mpinned-del:hover {
+  color: var(--text-error);
+  background-color: var(--background-modifier-hover);
+}
+
+.step-viewer-mpinned.is-hidden {
+  display: none;
+}
+
+.step-viewer-mpinned.is-flash {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
 }
@@ -263,6 +421,9 @@
   position: absolute;
   left: var(--size-4-2);
   bottom: var(--size-4-2);
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
   padding: var(--size-2-2) var(--size-4-2);
   border-radius: var(--radius-m);
   background-color: var(--background-secondary);
@@ -272,6 +433,12 @@
   font-variant-numeric: tabular-nums;
   z-index: 10;
   pointer-events: none;
+}
+
+/* The readout is click-through, but the "pin" button must accept clicks. */
+.step-viewer-measure-keep {
+  flex: 0 0 auto;
+  pointer-events: auto;
 }
 
 /* --- Part info panel (hover) --- */

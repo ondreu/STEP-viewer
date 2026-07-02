@@ -1,4 +1,5 @@
 import { Plugin } from "obsidian";
+import { updatePluginData } from "./pluginData";
 
 export interface StoredAnnotation {
   id: string;
@@ -7,6 +8,13 @@ export interface StoredAnnotation {
   z: number; // anchor in model-local coordinates
   text: string;
   part?: string;
+  /** Show the note only on mouse-over (collapsed to a dot otherwise). */
+  hoverOnly?: boolean;
+  /** Render the note off to the side with a leader line back to the anchor. */
+  leader?: boolean;
+  /** Leader offset from the anchor, in screen pixels (only used when leader). */
+  ox?: number;
+  oy?: number;
 }
 
 interface DataShape {
@@ -30,10 +38,11 @@ export class AnnotationStore {
   }
 
   async set(path: string, list: StoredAnnotation[]): Promise<void> {
-    const data = ((await this.plugin.loadData()) as DataShape | null) ?? {};
-    data.annotations = data.annotations ?? {};
-    if (list.length) data.annotations[path] = list;
-    else delete data.annotations[path];
-    await this.plugin.saveData(data);
+    await updatePluginData(this.plugin, (raw) => {
+      const data = raw as DataShape;
+      data.annotations = data.annotations ?? {};
+      if (list.length) data.annotations[path] = list;
+      else delete data.annotations[path];
+    });
   }
 }

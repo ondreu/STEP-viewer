@@ -10,6 +10,9 @@ import { LabelLayer, LabelHandle } from "../ui/LabelLayer";
 import { AnnotationLayer } from "../ui/AnnotationLayer";
 import { createAnnotationsPanel } from "../ui/AnnotationsPanel";
 import { AnnotationStore } from "../annotations/AnnotationStore";
+import { MeasurementLayer } from "../ui/MeasurementLayer";
+import { MeasurementStore } from "../annotations/MeasurementStore";
+import { setIcon, setTooltip } from "obsidian";
 
 export interface MountOptions {
   plugin: Plugin;
@@ -42,16 +45,24 @@ export function mountViewer(
 
   // Measurement readout (bottom-left) + number labels beside the lines.
   const readout = host.createDiv({ cls: "step-viewer-measure-readout" });
+  const readoutText = readout.createSpan({ cls: "step-viewer-measure-text" });
+  const keepBtn = readout.createEl("button", {
+    cls: "step-viewer-btn clickable-icon step-viewer-measure-keep",
+  });
+  setIcon(keepBtn, "pin");
+  setTooltip(keepBtn, "Pin this measurement", { placement: "top" });
+  keepBtn.hide();
   readout.hide();
   controller.onMeasureUpdate = (text) => {
     if (text == null) {
-      readout.setText("");
+      readoutText.setText("");
       readout.hide();
     } else {
-      readout.setText(text);
+      readoutText.setText(text);
       readout.show();
     }
   };
+  controller.onMeasureCanKeep = (canKeep) => keepBtn.toggle(canKeep);
   let measureLabels: LabelHandle[] = [];
   controller.onMeasureLabels = (labels) => {
     for (const h of measureLabels) h.remove();
@@ -94,17 +105,42 @@ export function mountViewer(
   annotations.onChange = () => annotsPanel.render();
   void annotations.load();
 
+  // Pinned (persistent) measurements — parented to the model, persisted per file.
+  const measurements = new MeasurementLayer(
+    controller,
+    labelLayer,
+    new MeasurementStore(opts.plugin),
+    opts.filePath,
+  );
+  void measurements.load();
+
+  // "Pin" the current A–B measurement: convert its world points to model-local
+  // coordinates so the persistent copy follows rolls, then clear the transient.
+  keepBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const m = controller.getCompletedMeasurement();
+    if (!m) return;
+    measurements.add(controller.worldToLocal(m.a), controller.worldToLocal(m.b));
+    controller.clearCurrentMeasurement();
+  });
+
   // Right-side rail: view cube, roll arrows, toolbar.
   const rail = host.createDiv({ cls: "step-viewer-rail" });
   const cube = new ViewCube(rail, {
+    // Express the camera orientation in the *model's* frame so the cube stays
+    // locked to the model. A 90° roll rotates the model (not the camera), so
+    // without this the cube would desync from the geometry after a roll.
     getOrientation: () => {
       const cam = controller.getCamera();
-      return {
-        dir: cam.position.clone().sub(controller.getTarget()).normalize(),
-        up: cam.up.clone(),
-      };
+      const inv = controller.getModelQuaternion().invert();
+      const dir = cam.position.clone().sub(controller.getTarget()).normalize().applyQuaternion(inv);
+      const up = cam.up.clone().applyQuaternion(inv);
+      return { dir, up };
     },
-    onSelect: (dir) => controller.setViewDirection(dir),
+    // The clicked face is a model-frame direction; rotate it back to world space
+    // before snapping the camera.
+    onSelect: (dir) =>
+      controller.setViewDirection(dir.clone().applyQuaternion(controller.getModelQuaternion())),
   });
 
   const roll = rail.createDiv({ cls: "step-viewer-roll" });
@@ -133,6 +169,7 @@ export function mountViewer(
   );
   controller.registerDisposable(cube);
   controller.registerDisposable(annotations);
+  controller.registerDisposable(measurements);
   controller.registerDisposable(labelLayer);
 
   return {

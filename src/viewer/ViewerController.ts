@@ -93,6 +93,9 @@ export class ViewerController {
   onMeasureUpdate: ((text: string | null) => void) | null = null;
   /** Called with the measurement number labels (empty array to clear them). */
   onMeasureLabels: ((labels: MeasureLabel[]) => void) | null = null;
+  /** Called when a full A–B measurement becomes available (or is cleared), so
+   *  the UI can offer to pin it as a persistent measurement. */
+  onMeasureCanKeep: ((canKeep: boolean) => void) | null = null;
 
   // Annotation pick mode.
   private annotateEnabled = false;
@@ -217,6 +220,20 @@ export class ViewerController {
   /** World position for a point expressed in model-local space. */
   localToWorld(local: THREE.Vector3): THREE.Vector3 {
     return this.model ? this.model.localToWorld(local.clone()) : local.clone();
+  }
+
+  /** Model-local position for a point expressed in world space. */
+  worldToLocal(world: THREE.Vector3): THREE.Vector3 {
+    return this.model ? this.model.worldToLocal(world.clone()) : world.clone();
+  }
+
+  /**
+   * The model's current orientation (its group quaternion). The view cube uses
+   * this to stay locked to the *model* frame rather than the world frame, so a
+   * 90° roll — which rotates the model, not the camera — rotates the cube too.
+   */
+  getModelQuaternion(): THREE.Quaternion {
+    return this.model ? this.model.quaternion.clone() : new THREE.Quaternion();
   }
 
   /** Register a resource to dispose when this controller is disposed. */
@@ -569,6 +586,7 @@ export class ViewerController {
       if (dy > 1e-6) labels.push({ pos: mid(c1, c2), text: `${num(dy)} mm`, color: AXIS_COLORS.y });
       if (dz > 1e-6) labels.push({ pos: mid(c2, b), text: `${num(dz)} mm`, color: AXIS_COLORS.z });
       this.onMeasureLabels?.(labels);
+      this.onMeasureCanKeep?.(true);
     } else {
       this.onMeasureUpdate?.(
         resolved.snapped
@@ -723,9 +741,57 @@ export class ViewerController {
     this.previewMesh = null;
   }
 
+  /**
+   * Public: return the current completed A–B measurement (world coordinates),
+   * or null if fewer than two points are set. Used to pin it persistently.
+   */
+  getCompletedMeasurement(): { a: THREE.Vector3; b: THREE.Vector3 } | null {
+    if (this.measurePoints.length < 2) return null;
+    return { a: this.measurePoints[0].clone(), b: this.measurePoints[1].clone() };
+  }
+
+  /** Public: discard the current transient measurement line and markers. */
+  clearCurrentMeasurement(): void {
+    this.clearMeasurement();
+  }
+
+  /**
+   * Build a persistent measurement graphic (two markers + connecting line) as a
+   * child of the model group, so it follows rolls and orbits with the geometry.
+   * Points are in model-local coordinates. Returns the group for later removal.
+   */
+  addPersistentMeasurement(aLocal: THREE.Vector3, bLocal: THREE.Vector3): THREE.Object3D {
+    const group = new THREE.Group();
+    for (const p of [aLocal, bLocal]) {
+      const geom = new THREE.SphereGeometry(this.markerRadius, 16, 12);
+      const mat = new THREE.MeshBasicMaterial({ color: MEASURE_COLOR });
+      const sphere = new THREE.Mesh(geom, mat);
+      sphere.position.copy(p);
+      group.add(sphere);
+    }
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([aLocal, bLocal]);
+    const lineMat = new THREE.LineBasicMaterial({ color: MEASURE_COLOR });
+    group.add(new THREE.Line(lineGeom, lineMat));
+    group.traverse((o) => (o.raycast = () => {})); // never pickable
+    this.model?.add(group);
+    return group;
+  }
+
+  removePersistentMeasurement(group: THREE.Object3D): void {
+    group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose?.();
+      const mat = m.material;
+      if (Array.isArray(mat)) mat.forEach((x) => x?.dispose?.());
+      else mat?.dispose?.();
+    });
+    group.parent?.remove(group);
+  }
+
   /** Remove markers/line. `keepReadout` avoids clobbering the pick prompt. */
   private clearMeasurement(keepReadout = false): void {
     this.measurePoints = [];
+    this.onMeasureCanKeep?.(false);
     for (const child of [...this.measureGroup.children]) {
       const m = child as THREE.Mesh;
       m.geometry?.dispose?.();
@@ -815,7 +881,7 @@ export class ViewerController {
 }
 
 /** Format a millimeter distance, switching to metres for large values. */
-function formatMm(mm: number): string {
+export function formatMm(mm: number): string {
   if (mm >= 1000) return `${(mm / 1000).toFixed(3)} m`;
   return `${mm.toFixed(2)} mm`;
 }
