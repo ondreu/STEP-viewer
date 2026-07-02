@@ -306,7 +306,7 @@ async function takeScreenshot(
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const outPath = `${folder ? folder + "/" : ""}${base}-view-${stamp}.png`;
 
-    await app.vault.createBinary(outPath, bytes.buffer as ArrayBuffer);
+    await app.vault.createBinary(outPath, bytes.buffer);
     try {
       await navigator.clipboard.writeText(`![[${outPath}]]`);
       new Notice(`Saved ${outPath}\nEmbed link copied to clipboard.`);

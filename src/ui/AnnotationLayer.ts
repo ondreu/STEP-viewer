@@ -327,7 +327,7 @@ export class AnnotationLayer {
     linkInput.addEventListener("pointerdown", (e) => e.stopPropagation());
     linkChip.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (d.link) this.plugin.app.workspace.openLinkText(d.link, this.path, false);
+      if (d.link) void this.plugin.app.workspace.openLinkText(d.link, this.path, false);
     });
     syncLink();
 
@@ -397,7 +397,7 @@ export class AnnotationLayer {
         e.preventDefault();
         e.stopPropagation();
         const href = a.getAttribute("data-href") || a.getAttribute("href") || "";
-        if (href) this.plugin.app.workspace.openLinkText(href, this.path, false);
+        if (href) void this.plugin.app.workspace.openLinkText(href, this.path, false);
         return;
       }
       enterEdit();

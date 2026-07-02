@@ -107,7 +107,7 @@ export class LabelLayer {
       this.v.copy(it.world()).project(camera);
       if (this.v.z > 1 || this.v.z < -1) {
         it.el.toggleClass("step-viewer-label-offscreen", true);
-        if (it.line) it.line.style.display = "none";
+        it.line?.classList.add("is-hidden");
         continue;
       }
       const x = (this.v.x * 0.5 + 0.5) * w;
@@ -124,10 +124,10 @@ export class LabelLayer {
         it.line.setAttribute("y1", String(ly));
         it.line.setAttribute("x2", String(x));
         it.line.setAttribute("y2", String(y));
-        it.line.style.display = "";
+        it.line.classList.remove("is-hidden");
       } else {
         it.el.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
-        if (it.line) it.line.style.display = "none";
+        it.line?.classList.add("is-hidden");
       }
     }
   }

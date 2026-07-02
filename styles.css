@@ -342,6 +342,11 @@
   opacity: 0.85;
 }
 
+/* Leader line hidden while its label is off-screen or pinned on the anchor. */
+.step-viewer-leader-line.is-hidden {
+  display: none;
+}
+
 /* Pinned (persistent) measurement labels. */
 .step-viewer-mpinned {
   display: flex;
