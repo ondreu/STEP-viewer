@@ -76,7 +76,13 @@ function serialize(result: OcctResult): {
   return { result: { ...result, meshes }, transfer };
 }
 
-ctx.onmessage = async (ev: MessageEvent): Promise<void> => {
+// onmessage must return void, so we hand off to an async handler and drop its
+// promise (errors are reported back via postMessage inside the handler).
+ctx.onmessage = (ev: MessageEvent): void => {
+  void handleMessage(ev);
+};
+
+async function handleMessage(ev: MessageEvent): Promise<void> {
   const msg = ev.data as InMessage;
 
   if (msg.type === "init") {
@@ -103,4 +109,4 @@ ctx.onmessage = async (ev: MessageEvent): Promise<void> => {
       error: err instanceof Error ? err.message : String(err),
     });
   }
-};
+}

@@ -10,7 +10,11 @@ export const DEFAULT_SETTINGS: StepViewerSettings = {
   quality: DEFAULT_QUALITY,
 };
 
-/** A plugin that carries STEP Viewer settings (used by the views/embeds). */
+/**
+ * A plugin that carries STEP Viewer settings (used by the views/embeds).
+ * The property is `stepSettings`, not `settings`: Obsidian 1.13 introduced an
+ * official `Plugin.settings`, and reusing that name collides with it.
+ */
 export interface HasStepSettings {
-  settings: StepViewerSettings;
+  stepSettings: StepViewerSettings;
 }

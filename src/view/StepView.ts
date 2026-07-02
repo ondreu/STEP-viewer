@@ -84,7 +84,7 @@ export class StepView extends FileView {
     qualityOverride?: Quality,
   ): Promise<void> {
     const loadingEl = this.showLoading(host);
-    const quality = qualityOverride ?? this.plugin.settings.quality;
+    const quality = qualityOverride ?? this.plugin.stepSettings.quality;
 
     try {
       const buffer = await this.app.vault.readBinary(file);

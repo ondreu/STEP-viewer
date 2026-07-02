@@ -14,7 +14,9 @@ import { Quality } from "./viewer/params";
  * file open, not here.
  */
 export default class StepViewerPlugin extends Plugin {
-  settings: StepViewerSettings = { ...DEFAULT_SETTINGS };
+  // Named `stepSettings`, not `settings`: Obsidian 1.13 added an official
+  // `Plugin.settings`, and reusing that name collides with it.
+  stepSettings: StepViewerSettings = { ...DEFAULT_SETTINGS };
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -30,11 +32,12 @@ export default class StepViewerPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+    const data = (await this.loadData()) as Partial<StepViewerSettings> | null;
+    this.stepSettings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.saveData(this.stepSettings);
   }
 
   // onunload: Obsidian de-registers views/extensions registered via this.register*
@@ -70,8 +73,8 @@ class StepViewerSettingTab extends PluginSettingTab {
         for (const [value, label] of Object.entries(QUALITY_OPTIONS)) {
           dd.addOption(value, label);
         }
-        dd.setValue(this.plugin.settings.quality).onChange(async (value) => {
-          this.plugin.settings.quality = value as Quality;
+        dd.setValue(this.plugin.stepSettings.quality).onChange(async (value) => {
+          this.plugin.stepSettings.quality = value as Quality;
           await this.plugin.saveSettings();
         });
       });
