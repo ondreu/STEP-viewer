@@ -121,7 +121,15 @@ export class LabelLayer {
       if (!it.caption) continue;
       const text = it.caption();
       if (!text) continue;
-      if (it.el.hasClass("is-hidden") || it.el.hasClass("step-viewer-label-offscreen")) continue;
+      // Skip hidden, offscreen, and hover-only (collapsed to a dot) labels so
+      // the screenshot matches what's actually shown.
+      if (
+        it.el.hasClass("is-hidden") ||
+        it.el.hasClass("step-viewer-label-offscreen") ||
+        it.el.hasClass("is-hover-only")
+      ) {
+        continue;
+      }
       this.v.copy(it.world()).project(camera);
       if (this.v.z > 1 || this.v.z < -1) continue;
       let x = (this.v.x * 0.5 + 0.5) * w;

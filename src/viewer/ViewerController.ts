@@ -638,6 +638,7 @@ export class ViewerController {
     this.setHover(null);
     this.clearMeasurement();
     this.setPreview(null, false);
+    if (this.sectionEnabled) this.updateSectionPlane(); // re-sync world-space cut
   }
 
   private advanceRoll(dt: number): void {
@@ -646,7 +647,11 @@ export class ViewerController {
     const e = easeInOut(this.roll.t);
     this.model.position.lerpVectors(this.roll.startPos, this.roll.endPos, e);
     this.model.quaternion.copy(this.roll.startQuat).slerp(this.roll.endQuat, e);
-    if (this.roll.t >= 1) this.roll.active = false;
+    if (this.roll.t >= 1) {
+      this.roll.active = false;
+      // The clip plane is world-space; re-derive it from the rolled bounds.
+      if (this.sectionEnabled) this.updateSectionPlane();
+    }
   }
 
   toggleWireframe(): boolean {

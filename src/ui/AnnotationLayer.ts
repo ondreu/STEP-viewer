@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Plugin, setIcon, setTooltip } from "obsidian";
+import { Component, MarkdownRenderer, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { ViewerController } from "../viewer/ViewerController";
 import { LabelLayer, LabelHandle } from "./LabelLayer";
@@ -46,6 +46,9 @@ export class AnnotationLayer {
   private visible = true;
   private opacity = 1;
   private filter: string | null = null;
+  // Owns the markdown-render child components so they're freed when this view
+  // closes, not only when the plugin unloads.
+  private mdComponent = new Component();
   /** Fired when annotations are added/removed/edited (drives the list panel). */
   onChange: (() => void) | null = null;
 
@@ -55,7 +58,9 @@ export class AnnotationLayer {
     private store: AnnotationStore,
     private path: string,
     private plugin: Plugin,
-  ) {}
+  ) {
+    this.mdComponent.load();
+  }
 
   async load(): Promise<void> {
     const list = await this.store.get(this.path);
@@ -213,7 +218,8 @@ export class AnnotationLayer {
         d.leader
           ? { x: d.ox ?? DEFAULT_LEADER_OFFSET.x, y: d.oy ?? DEFAULT_LEADER_OFFSET.y }
           : null,
-      () => d.text,
+      // Screenshot caption: the rendered (plain) text, not the markdown source.
+      () => renderEl.textContent || d.text,
     );
     const live: Live = { data: d, pin, label, textEl };
 
@@ -347,7 +353,7 @@ export class AnnotationLayer {
 
   private async renderMarkdown(md: string, el: HTMLElement): Promise<void> {
     el.empty();
-    await MarkdownRenderer.render(this.plugin.app, md, el, this.path, this.plugin);
+    await MarkdownRenderer.render(this.plugin.app, md, el, this.path, this.mdComponent);
   }
 
   /** Small icon toggle inside a note's toolbar strip. */
@@ -442,6 +448,7 @@ export class AnnotationLayer {
       live.label.remove();
     }
     this.items = [];
+    this.mdComponent.unload(); // free all rendered-markdown child components
   }
 }
 

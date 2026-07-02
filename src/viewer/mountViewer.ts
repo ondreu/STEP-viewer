@@ -209,7 +209,7 @@ export function mountViewer(
   controller.registerDisposable(labelLayer);
 
   // Apply an embed's requested initial framing.
-  if (opts.initialView && VIEW_DIRS[opts.initialView] && opts.initialView !== "iso") {
+  if (opts.initialView && VIEW_DIRS[opts.initialView]) {
     controller.setViewDirection(VIEW_DIRS[opts.initialView].clone());
   }
   if (opts.initialRoll) controller.rollInstant(opts.initialRoll);
