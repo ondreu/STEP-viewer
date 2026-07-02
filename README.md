@@ -54,12 +54,19 @@ Download `main.js`, `manifest.json` and `styles.css` from the
   solid rather than hollow.
 - **Explode view** — a slider that spreads an assembly's top-level parts outward
   from its centre.
-- **Isolate** — hide everything except the part selected in the structure tree.
-- **Hover highlight + info** — the part under the cursor is highlighted and an
-  info panel shows its name, bounding-box size and triangle count; the matching
-  node is revealed in the structure tree.
+- **Isolate** — hide everything except the selected part; annotations and
+  measurements anchored outside that part are hidden with it.
+- **Hover / selection info** — the part under the cursor is highlighted and an
+  info panel (bottom-right) shows its name, assembly path, **material** (read
+  from the STEP metadata when present), bounding-box size, approximate **volume
+  and surface area**, colour swatch and triangle count; the matching node is
+  revealed in the structure tree. **Clicking** a part pins its info card so it
+  stays shown when the cursor moves away.
 - **Structure tree** — the STEP assembly hierarchy, with per-part visibility
-  toggles and click-to-frame.
+  toggles and click-to-frame. The panel is **resizable** (drag the corner grip),
+  the expand / collapse buttons step **one level at a time** across the whole
+  tree, and an **auto-measure** button pins the selected part's (or the whole
+  model's) bounding-box L × W × H as measurements in one click.
 - **Measurement types** — choose from a strip below the ruler button:
   - **Distance** — two points: straight-line distance **plus per-axis X / Y / Z
     components**, as colour-coded legs and numbers beside each line.
@@ -71,19 +78,25 @@ Download `main.js`, `manifest.json` and `styles.css` from the
 - **Pinned measurements** — press the 📌 **pin** button in the readout to keep a
   measurement. Pinned measurements are parented to the model (so they follow
   rolls) and are saved per file; each has a distance label with a delete button.
+  They're also listed in the annotations panel (click a row to fly to it), and
+  their end markers **scale with zoom** so they stay a constant on-screen size.
 - **Snap to corners / edges** — the magnet toggle snaps both measurement and
   annotation picks to the nearest visible vertex/edge, with a live preview
   marker (green when snapping, orange when free).
 - **Annotations** — pin editable notes to points on the model; they follow the
-  part through rolls and are saved per file. An annotations list panel shows
-  each note and the part it's attached to, with show/hide and opacity controls.
-  Each note has per-note controls:
+  part through rolls and are saved per file. Their anchor pins **scale with
+  zoom** to stay a constant on-screen size. An annotations list panel lists each
+  note (and the pinned measurements) with a show/hide toggle — which hides notes
+  **and** measurements together — and an opacity slider that fades the notes,
+  their anchor pins and their leader arrows. Each note has per-note controls:
   - **Hover-only** — collapse the note to a dot and reveal the text on hover.
   - **Leader** — **drag a note off the model** (or use the leader button) to
     pull it out to the side; a dashed line with an arrowhead points back to its
     anchor. Drag again to reposition; the leader button snaps it back.
-  - **Category colour** — a swatch opens a palette (Note / Issue / OK / Info);
-    the list panel can filter by category.
+  - **Category colour** — a swatch opens a palette of presets
+    (Note / Issue / OK / Info) **plus a custom colour picker** for any colour;
+    the list panel can filter by category. You can also recolour a note straight
+    from the list by **clicking its colour dot**.
   - **Markdown** — note text renders as Markdown in read state (click to edit).
   - **Link** — attach an Obsidian note (wikilink); a ↗ chip opens it.
 - **Screenshot** — capture the current view (model + measurement/note captions)
@@ -122,10 +135,12 @@ roll the view; clicking a **cube face** first undoes any roll so the view snaps
 to a clean, upright standard view.
 
 Hovering a part in the model highlights it; **clicking** a part selects it (the
-highlight sticks) and reveals it in the structure tree — hovering never scrolls
-the tree. In the **structure tree**, hover a row to highlight that part in 3D,
-click it to select and frame it, and use the header controls to expand/collapse
-all, toggle all visibility, filter by name, or **isolate** the selection.
+highlight sticks, and its info card stays pinned) and reveals it in the
+structure tree — hovering never scrolls the tree. In the **structure tree**,
+hover a row to highlight that part in 3D, click it to select and frame it, and
+use the header controls to expand/collapse **one level at a time**, toggle all
+visibility, auto-measure the selection's bounding box, filter by name, or
+**isolate** the selection. Drag the panel's bottom-right grip to resize it.
 
 ### Embedding a model in a note
 
