@@ -47,9 +47,23 @@ function getModule(): Promise<OcctModule> {
 
 // --- Worker-backed parsing ---------------------------------------------------
 
+/** A parse result plus diagnostics (mesh count, OCCT logs, duration). */
+export interface ParseOutcome {
+  result: OcctResult;
+  meshCount: number;
+  logs: string[];
+  ms: number;
+}
+
 interface Pending {
-  resolve: (result: OcctResult) => void;
+  resolve: (outcome: ParseOutcome) => void;
   reject: (err: Error) => void;
+}
+
+/** Log parse diagnostics to the console so failures are debuggable from the field. */
+function logDiagnostics(where: string, meshCount: number, ms: number, logs: string[]): void {
+  console.info(`[STEP Viewer] parse (${where}): ${meshCount} meshes in ${ms} ms`);
+  if (logs.length) console.warn("[STEP Viewer] OCCT output:\n" + logs.join("\n"));
 }
 
 let worker: Worker | null = null;
@@ -91,14 +105,16 @@ function ensureWorker(): Worker {
   const w = new Worker(workerUrl);
   w.onmessage = (ev: MessageEvent) => {
     const msg = ev.data as
-      | { id: number; ok: true; result: OcctResult }
-      | { id: number; ok: false; error: string };
+      | { id: number; ok: true; result: OcctResult; meshCount: number; logs: string[]; ms: number }
+      | { id: number; ok: false; error: string; logs?: string[]; ms?: number };
     const entry = pending.get(msg.id);
     if (!entry) return;
     pending.delete(msg.id);
     if (msg.ok) {
-      entry.resolve(msg.result);
+      logDiagnostics("worker", msg.meshCount, msg.ms, msg.logs);
+      entry.resolve({ result: msg.result, meshCount: msg.meshCount, logs: msg.logs, ms: msg.ms });
     } else {
+      if (msg.logs?.length) console.warn("[STEP Viewer] OCCT output:\n" + msg.logs.join("\n"));
       // A failed parse can leave the WASM module in a poisoned state (e.g. after
       // an out-of-memory abort), so drop the worker; the next parse recreates it.
       entry.reject(new Error(msg.error));
@@ -115,7 +131,7 @@ function ensureWorker(): Worker {
 async function parseInWorker(
   bytes: Uint8Array,
   params: OcctReadParams,
-): Promise<OcctResult> {
+): Promise<ParseOutcome> {
   const wasmBinary = await getWasm();
   const w = ensureWorker();
   if (!workerInited) {
@@ -126,7 +142,7 @@ async function parseInWorker(
     workerInited = true;
   }
   const id = nextId++;
-  return new Promise<OcctResult>((resolve, reject) => {
+  return new Promise<ParseOutcome>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     // Transfer the file bytes so they don't linger as a second copy on the main
     // thread during the parse. Callers must not touch `bytes` afterwards.
@@ -143,16 +159,20 @@ export const OcctLoader = {
    * thread. NOTE: on the worker path the input `bytes` buffer is transferred and
    * must not be used after this call — decode any text you need beforehand.
    */
-  async parseStep(bytes: Uint8Array, params: OcctReadParams): Promise<OcctResult> {
+  async parseStep(bytes: Uint8Array, params: OcctReadParams): Promise<ParseOutcome> {
     if (workerSupported()) {
       return parseInWorker(bytes, params);
     }
     const occt = await getModule();
+    const t0 = typeof performance !== "undefined" ? performance.now() : 0;
     const result = occt.ReadStepFile(bytes, params);
+    const ms = Math.round((typeof performance !== "undefined" ? performance.now() : 0) - t0);
     if (!result || !result.success) {
       throw new Error("Could not parse this STEP file (occt success=false).");
     }
-    return result;
+    const meshCount = (result.meshes ?? []).length;
+    logDiagnostics("main-thread", meshCount, ms, []);
+    return { result, meshCount, logs: [], ms };
   },
 
   /** Testing/cleanup helper — drops cached module + worker. */

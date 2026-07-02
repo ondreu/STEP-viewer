@@ -38,6 +38,16 @@ type InMessage = InitMessage | ParseMessage;
 
 let modulePromise: Promise<OcctModule> | null = null;
 
+// OCCT reports problems (including allocation failures) via emscripten's
+// stdout/stderr, which we route here so failures come back with a diagnosis
+// instead of a silent empty result.
+let logs: string[] = [];
+
+/** High-resolution timestamp, falling back to 0 if performance is unavailable. */
+function now(): number {
+  return typeof performance !== "undefined" ? performance.now() : 0;
+}
+
 /** Convert a mesh's plain-number arrays to typed arrays and collect transfers. */
 function serialize(result: OcctResult): {
   result: OcctResult;
@@ -87,7 +97,12 @@ async function handleMessage(ev: MessageEvent): Promise<void> {
 
   if (msg.type === "init") {
     // Instantiate once; subsequent parse messages await this promise.
-    modulePromise = occtimportjs({ wasmBinary: msg.wasmBinary });
+    // Route OCCT's stdout/stderr into `logs` for diagnostics.
+    modulePromise = occtimportjs({
+      wasmBinary: msg.wasmBinary,
+      print: (s: string) => logs.push(s),
+      printErr: (s: string) => logs.push(s),
+    });
     return;
   }
 
@@ -95,18 +110,23 @@ async function handleMessage(ev: MessageEvent): Promise<void> {
   try {
     if (!modulePromise) throw new Error("occt worker received no init message");
     const occt = await modulePromise;
+    logs = [];
+    const t0 = now();
     const result = occt.ReadStepFile(bytes, params);
+    const ms = Math.round(now() - t0);
     if (!result || !result.success) {
-      ctx.postMessage({ id, ok: false, error: "occt success=false" });
+      ctx.postMessage({ id, ok: false, error: "occt success=false", logs, ms });
       return;
     }
+    const meshCount = (result.meshes ?? []).length;
     const { result: serialized, transfer } = serialize(result);
-    ctx.postMessage({ id, ok: true, result: serialized }, transfer);
+    ctx.postMessage({ id, ok: true, result: serialized, meshCount, logs, ms }, transfer);
   } catch (err) {
     ctx.postMessage({
       id,
       ok: false,
       error: err instanceof Error ? err.message : String(err),
+      logs,
     });
   }
 }

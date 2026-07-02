@@ -121,7 +121,7 @@ export class StepEmbed extends MarkdownRenderChild {
           : new TextDecoder("latin1").decode(bytes);
 
       const quality = this.opts.quality ?? this.plugin.stepSettings.quality;
-      const result = await OcctLoader.parseStep(
+      const { result } = await OcctLoader.parseStep(
         bytes,
         paramsForFile(file.stat.size, quality),
       );

@@ -1,11 +1,12 @@
 {
   "name": "obsidian-step-viewer",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "View STEP (.step/.stp) CAD models in a 3D viewer inside Obsidian.",
   "main": "main.js",
   "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "patch-occt": "node scripts/patch-occt-memory.mjs",
+    "dev": "npm run patch-occt && node esbuild.config.mjs",
+    "build": "npm run patch-occt && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "typecheck": "tsc -noEmit -skipLibCheck"
   },
   "keywords": [

@@ -96,12 +96,12 @@ export class StepView extends FileView {
       const stepText = decodeStep(bytes);
 
       const params = paramsForFile(file.stat.size, quality);
-      const result = await OcctLoader.parseStep(bytes, params);
+      const { result, logs } = await OcctLoader.parseStep(bytes, params);
       if (token !== this.loadToken) return;
 
       if (!hasRenderableMeshes(result)) {
         loadingEl.remove();
-        this.showNoGeometry(host, file, token, quality);
+        this.showNoGeometry(host, file, token, quality, logs);
         return;
       }
 
@@ -152,19 +152,25 @@ export class StepView extends FileView {
     file: TFile,
     token: number,
     quality: Quality,
+    logs: string[] = [],
   ): void {
     const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-error" });
     el.createEl("div", {
       text: "No geometry could be displayed",
       cls: "step-viewer-message",
     });
+    // If OCCT's output hints at an allocation failure, say so plainly — that's
+    // the memory ceiling, not an unsupported file.
+    const outOfMemory = logs.some((l) => /memory|alloc|bad_alloc|out of/i.test(l));
     const canRetry = quality !== "low";
-    el.createEl("div", {
-      text:
-        `The parser produced no usable geometry from this ${formatFileSize(file.stat.size)} ` +
+    const detail = outOfMemory
+      ? `This ${formatFileSize(file.stat.size)} model ran the in-browser (WASM) parser ` +
+        "out of memory before it could produce geometry."
+      : `The parser produced no usable geometry from this ${formatFileSize(file.stat.size)} ` +
         "file. It may be too large for the in-browser (WASM) parser, or it uses " +
-        "entities the parser doesn't support." +
-        (canRetry ? " Retrying at a lower quality may fit it in memory." : ""),
+        "entities the parser doesn't support.";
+    el.createEl("div", {
+      text: detail + (canRetry ? " Retrying at a lower quality may help." : ""),
       cls: "step-viewer-message-sub",
     });
     if (canRetry) this.addRetryButton(el, file, host, token);
