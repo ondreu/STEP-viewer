@@ -17,6 +17,9 @@ const DEFAULT_HEIGHT = 400;
  *   ```step
  *   path: Models/bracket.step
  *   height: 320
+ *   view: front          # front/back/left/right/top/bottom/iso
+ *   rotate: 90           # initial roll in degrees (or `roll: 1` in quarter turns)
+ *   annotations: false   # hide saved notes in this embed (default true)
  *   ```
  * `path` may be a wikilink target or a vault-relative path. A bare first line is
  * also accepted as the path.
@@ -40,8 +43,11 @@ export class StepEmbed extends MarkdownRenderChild {
     super(containerEl);
   }
 
+  private opts: ParsedSource = { path: "", height: DEFAULT_HEIGHT };
+
   onload(): void {
-    const { path, height } = parseSource(this.source);
+    this.opts = parseSource(this.source);
+    const { path, height } = this.opts;
     this.containerEl.empty();
     this.containerEl.addClass("step-viewer-embed");
     this.host = this.containerEl.createDiv({ cls: "step-viewer-embed-host" });
@@ -116,6 +122,9 @@ export class StepEmbed extends MarkdownRenderChild {
       this.viewer = mountViewer(this.host, result, {
         plugin: this.plugin,
         filePath: file.path,
+        showAnnotations: this.opts.showAnnotations,
+        initialView: this.opts.view,
+        initialRoll: this.opts.roll,
       });
     } catch (err) {
       console.error("[STEP Viewer] Embed failed", this.linktext, err);
@@ -178,9 +187,18 @@ export class StepEmbed extends MarkdownRenderChild {
   }
 }
 
-function parseSource(source: string): { path: string; height: number } {
-  let path = "";
-  let height = DEFAULT_HEIGHT;
+interface ParsedSource {
+  path: string;
+  height: number;
+  showAnnotations?: boolean;
+  view?: string;
+  roll?: number;
+}
+
+const VIEW_NAMES = new Set(["front", "back", "left", "right", "top", "bottom", "iso"]);
+
+function parseSource(source: string): ParsedSource {
+  const out: ParsedSource = { path: "", height: DEFAULT_HEIGHT };
   for (const raw of source.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
@@ -188,16 +206,28 @@ function parseSource(source: string): { path: string; height: number } {
     if (m) {
       const key = m[1].toLowerCase();
       const value = m[2].trim();
-      if (key === "path") path = stripLink(value);
-      else if (key === "height") {
+      if (key === "path") {
+        out.path = stripLink(value);
+      } else if (key === "height") {
         const n = parseInt(value, 10);
-        if (!Number.isNaN(n)) height = Math.max(120, n);
+        if (!Number.isNaN(n)) out.height = Math.max(120, n);
+      } else if (key === "annotations") {
+        out.showAnnotations = !/^(false|no|0|off)$/i.test(value);
+      } else if (key === "view") {
+        const v = value.toLowerCase();
+        if (VIEW_NAMES.has(v)) out.view = v;
+      } else if (key === "roll") {
+        const n = parseInt(value, 10);
+        if (!Number.isNaN(n)) out.roll = ((n % 4) + 4) % 4;
+      } else if (key === "rotate") {
+        const deg = parseInt(value, 10);
+        if (!Number.isNaN(deg)) out.roll = ((Math.round(deg / 90) % 4) + 4) % 4;
       }
-    } else if (!path) {
-      path = stripLink(line); // a bare line is treated as the path
+    } else if (!out.path) {
+      out.path = stripLink(line); // a bare line is treated as the path
     }
   }
-  return { path, height };
+  return out;
 }
 
 /** Accept `[[file.step]]` as well as a plain path. */

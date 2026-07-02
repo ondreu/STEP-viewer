@@ -105,7 +105,10 @@ function renderNode(
     cls: "step-viewer-tree-label",
     text: node.name,
   });
-  label.addEventListener("click", () => controller.focusObject(node.object));
+  label.addEventListener("click", () => {
+    controller.setSelected(node.object);
+    controller.focusObject(node.object);
+  });
 
   rows.set(node.object, {
     row,

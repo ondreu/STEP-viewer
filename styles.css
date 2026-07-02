@@ -441,6 +441,160 @@
   pointer-events: auto;
 }
 
+/* --- Measurement-type strip (under the toolbar while measuring) --- */
+.step-viewer-measure-modes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--size-2-1);
+  max-width: 190px;
+  padding: var(--size-2-1);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
+.step-viewer-mode-btn {
+  min-width: 26px;
+  height: 26px;
+  font-size: var(--font-ui-medium);
+  line-height: 1;
+}
+
+/* --- Floating view controls (section, explode) at bottom-centre --- */
+.step-viewer-viewctls {
+  position: absolute;
+  bottom: var(--size-4-2);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--size-2-2);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.step-viewer-viewctl {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-4-2);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  pointer-events: auto;
+}
+
+.step-viewer-viewctl-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.step-viewer-viewctl-axes {
+  display: flex;
+  gap: var(--size-2-1);
+}
+
+.step-viewer-viewctl-axis,
+.step-viewer-viewctl-flip {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+}
+
+.step-viewer-viewctl-slider {
+  width: 150px;
+}
+
+/* --- Annotation extras: colour swatch, link, markdown --- */
+.step-viewer-annot-dot {
+  background-color: var(--annot-color, #ffc531);
+}
+
+.step-viewer-annot-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-annot-link {
+  display: block;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+  cursor: pointer;
+  pointer-events: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.step-viewer-annot-linkrow {
+  display: flex;
+}
+
+.step-viewer-annot-linkrow input {
+  width: 100%;
+  font-size: var(--font-ui-smaller);
+}
+
+.step-viewer-annot-render {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  pointer-events: auto;
+  cursor: text;
+  max-width: 200px;
+  word-break: break-word;
+}
+
+.step-viewer-annot-render > *:first-child {
+  margin-top: 0;
+}
+
+.step-viewer-annot-render > *:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Annotations panel: category filter + row dots --- */
+.step-viewer-annots-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1) var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-annots-chip {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 var(--size-2-1);
+  font-size: var(--font-ui-smaller);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+.step-viewer-annots-chip.is-active {
+  opacity: 1;
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.step-viewer-annots-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
 /* --- Part info panel (hover) --- */
 .step-viewer-info {
   position: absolute;

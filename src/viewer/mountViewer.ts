@@ -1,4 +1,5 @@
-import { Plugin } from "obsidian";
+import { Notice, Plugin, setIcon, setTooltip } from "obsidian";
+import * as THREE from "three";
 import { OcctResult } from "../types";
 import { stepToThree } from "./StepToThree";
 import { ViewerController } from "./ViewerController";
@@ -12,18 +13,35 @@ import { createAnnotationsPanel } from "../ui/AnnotationsPanel";
 import { AnnotationStore } from "../annotations/AnnotationStore";
 import { MeasurementLayer } from "../ui/MeasurementLayer";
 import { MeasurementStore } from "../annotations/MeasurementStore";
-import { setIcon, setTooltip } from "obsidian";
+import { createSectionControl, createExplodeControl } from "../ui/ViewControls";
 
 export interface MountOptions {
   plugin: Plugin;
-  /** STEP file path — the key for annotation persistence. */
+  /** STEP file path — the key for annotation & measurement persistence. */
   filePath: string;
+  /** Show saved annotations/notes (default true). Embeds may opt out. */
+  showAnnotations?: boolean;
+  /** Initial standard view: front/back/left/right/top/bottom/iso. */
+  initialView?: string;
+  /** Initial roll about the view axis, in 90° quarter turns. */
+  initialRoll?: number;
 }
 
 export interface ViewerHandle {
   controller: ViewerController;
   dispose(): void;
 }
+
+/** Standard-view directions (from target towards the camera), model-local. */
+const VIEW_DIRS: Record<string, THREE.Vector3> = {
+  front: new THREE.Vector3(0, 0, 1),
+  back: new THREE.Vector3(0, 0, -1),
+  left: new THREE.Vector3(-1, 0, 0),
+  right: new THREE.Vector3(1, 0, 0),
+  top: new THREE.Vector3(0, 1, 0),
+  bottom: new THREE.Vector3(0, -1, 0),
+  iso: new THREE.Vector3(1, 0.8, 1),
+};
 
 /**
  * Build the full interactive viewer into `host` from a parsed occt result:
@@ -72,7 +90,7 @@ export function mountViewer(
       el.textContent = l.text;
       el.style.color = `#${l.color.toString(16).padStart(6, "0")}`;
       const pos = l.pos.clone();
-      return labelLayer.add(el, () => pos);
+      return labelLayer.add(el, () => pos, null, () => l.text);
     });
   };
 
@@ -96,6 +114,7 @@ export function mountViewer(
     labelLayer,
     new AnnotationStore(opts.plugin),
     opts.filePath,
+    opts.plugin,
   );
   controller.onAnnotate = ({ local, part }) => annotations.addAt(local, part);
 
@@ -104,6 +123,7 @@ export function mountViewer(
   annotsPanel.el.toggle(false);
   annotations.onChange = () => annotsPanel.render();
   void annotations.load();
+  if (opts.showAnnotations === false) annotations.setVisible(false);
 
   // Pinned (persistent) measurements — parented to the model, persisted per file.
   const measurements = new MeasurementLayer(
@@ -123,6 +143,11 @@ export function mountViewer(
     measurements.add(controller.worldToLocal(m.a), controller.worldToLocal(m.b));
     controller.clearCurrentMeasurement();
   });
+
+  // Floating view controls (bottom-centre), toggled from the toolbar.
+  const viewCtls = host.createDiv({ cls: "step-viewer-viewctls" });
+  const sectionCtl = createSectionControl(viewCtls, controller);
+  const explodeCtl = createExplodeControl(viewCtls, controller);
 
   // Right-side rail: view cube, roll arrows, toolbar.
   const rail = host.createDiv({ cls: "step-viewer-rail" });
@@ -160,6 +185,17 @@ export function mountViewer(
       annotsPanel.el.toggle(open);
       return open;
     },
+    onToggleSection: () => {
+      const open = !sectionCtl.el.isShown();
+      sectionCtl.setOpen(open);
+      return open;
+    },
+    onToggleExplode: () => {
+      const open = !explodeCtl.el.isShown();
+      explodeCtl.setOpen(open);
+      return open;
+    },
+    onScreenshot: () => void takeScreenshot(host, controller, labelLayer, opts),
   });
 
   // Per-frame overlays: keep the cube oriented and the labels positioned.
@@ -172,6 +208,12 @@ export function mountViewer(
   controller.registerDisposable(measurements);
   controller.registerDisposable(labelLayer);
 
+  // Apply an embed's requested initial framing.
+  if (opts.initialView && VIEW_DIRS[opts.initialView] && opts.initialView !== "iso") {
+    controller.setViewDirection(VIEW_DIRS[opts.initialView].clone());
+  }
+  if (opts.initialRoll) controller.rollInstant(opts.initialRoll);
+
   return {
     controller,
     dispose: () => {
@@ -179,4 +221,59 @@ export function mountViewer(
       host.empty();
     },
   };
+}
+
+/**
+ * Capture the current view as a PNG (WebGL buffer + projected label captions),
+ * save it next to the model, and copy an embed link to the clipboard.
+ */
+async function takeScreenshot(
+  host: HTMLElement,
+  controller: ViewerController,
+  labelLayer: LabelLayer,
+  opts: MountOptions,
+): Promise<void> {
+  try {
+    const dom = controller.getDomElement();
+    const cssW = dom.clientWidth || dom.width;
+    const cssH = dom.clientHeight || dom.height;
+    const scale = cssW ? dom.width / cssW : 1;
+    const url = controller.captureImage();
+
+    const canvas = activeDocument.createElement("canvas");
+    canvas.width = dom.width;
+    canvas.height = dom.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("image decode failed"));
+      img.src = url;
+    });
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    labelLayer.drawOnto(ctx, controller.getCamera(), cssW, cssH, scale);
+
+    const base64 = canvas.toDataURL("image/png").split(",")[1];
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+
+    const app = opts.plugin.app;
+    const slash = opts.filePath.lastIndexOf("/");
+    const folder = slash >= 0 ? opts.filePath.slice(0, slash) : "";
+    const base = opts.filePath.slice(slash + 1).replace(/\.[^.]+$/, "");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const outPath = `${folder ? folder + "/" : ""}${base}-view-${stamp}.png`;
+
+    await app.vault.createBinary(outPath, bytes.buffer as ArrayBuffer);
+    try {
+      await navigator.clipboard.writeText(`![[${outPath}]]`);
+      new Notice(`Saved ${outPath}\nEmbed link copied to clipboard.`);
+    } catch {
+      new Notice(`Saved ${outPath}`);
+    }
+  } catch (err) {
+    console.error("[STEP Viewer] Screenshot failed", err);
+    new Notice("Screenshot failed — see console.");
+  }
 }

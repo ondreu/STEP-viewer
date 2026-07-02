@@ -46,14 +46,26 @@ Download `main.js`, `manifest.json` and `styles.css` from the
   to a standard view (front / back / top / bottom / left / right), with
   **↶ / ↷ arrows** that animate a 90° roll.
 - **Wireframe** and **transparency** toggles (transparency reveals internals).
+- **Perspective / orthographic** projection toggle (orthographic is often better
+  for judging CAD proportions).
+- **Section plane** — a movable clipping plane (X / Y / Z axis, flip side, and a
+  position slider) that cuts into the model to inspect internal dimensions.
+- **Explode view** — a slider that spreads an assembly's top-level parts outward
+  from its centre.
+- **Isolate** — hide everything except the part selected in the structure tree.
 - **Hover highlight + info** — the part under the cursor is highlighted and an
   info panel shows its name, bounding-box size and triangle count; the matching
   node is revealed in the structure tree.
 - **Structure tree** — the STEP assembly hierarchy, with per-part visibility
   toggles and click-to-frame.
-- **Distance measurement** — click two points for the straight-line distance
-  **plus per-axis X / Y / Z components**, shown in the readout, as colour-coded
-  axis legs and as numbers beside each line.
+- **Measurement types** — choose from a strip below the ruler button:
+  - **Distance** — two points: straight-line distance **plus per-axis X / Y / Z
+    components**, as colour-coded legs and numbers beside each line.
+  - **Angle** — three points (the corner is the 2nd).
+  - **Radius / diameter** — three points around a circular edge (circle fit).
+  - **Thickness** — a point on a face; a ray through the solid finds the far side.
+  - **Point → face** — perpendicular distance from a point to a face's plane.
+  - **Face → face** — distance between two faces along the first face's normal.
 - **Pinned measurements** — press the 📌 **pin** button in the readout to keep a
   measurement. Pinned measurements are parented to the model (so they follow
   rolls) and are saved per file; each has a distance label with a delete button.
@@ -63,10 +75,16 @@ Download `main.js`, `manifest.json` and `styles.css` from the
 - **Annotations** — pin editable notes to points on the model; they follow the
   part through rolls and are saved per file. An annotations list panel shows
   each note and the part it's attached to, with show/hide and opacity controls.
-  Each note has two per-note display toggles:
+  Each note has per-note controls:
   - **Hover-only** — collapse the note to a dot and reveal the text on hover.
   - **Leader** — place the note off to the side with a dashed leader line back
-    to its anchor point; drag the note's toolbar strip to reposition it.
+    to its anchor point; drag the note to reposition it.
+  - **Category colour** — a swatch cycles Note / Issue / OK / Info; the list
+    panel can filter by category.
+  - **Markdown** — note text renders as Markdown in read state (click to edit).
+  - **Link** — attach an Obsidian note (wikilink); a ↗ chip opens it.
+- **Screenshot** — capture the current view (model + measurement/note captions)
+  as a PNG saved next to the model, with an embed link copied to the clipboard.
 - **Note embeds** — render a model inline in any note (see below).
 
 > **Measurement and annotations are approximate.** They run against the
@@ -85,13 +103,19 @@ below the navigation cube) provides:
 | Wireframe | Toggle wireframe rendering |
 | Edges | Toggle edge display |
 | Transparency | Make surfaces translucent to see inside |
-| Measure | Click two points to measure distance (approximate) |
+| Projection | Switch perspective ↔ orthographic |
+| Section | Show the clipping-plane control (axis / flip / position) |
+| Explode | Show the explode slider |
+| Measure | Enable measuring; pick a type from the strip that appears |
 | Snap | Snap measurement/annotation picks to corners & edges |
 | Annotate | Click a point to pin an editable note |
+| Isolate | Hide everything except the selected part |
+| Screenshot | Save a PNG of the current view next to the model |
 | Annotations | Open the annotations list panel |
 | Structure | Open the assembly structure tree |
 
-The ↶ / ↷ arrows below the cube roll the view 90°.
+The ↶ / ↷ arrows below the cube roll the view 90°. Click a part in the structure
+tree to select (highlight) and frame it; the Isolate button then hides the rest.
 
 ### Embedding a model in a note
 
@@ -99,6 +123,9 @@ The ↶ / ↷ arrows below the cube roll the view 90°.
 ```step
 path: Models/bracket.step
 height: 320
+view: front          # optional: front/back/left/right/top/bottom/iso
+rotate: 90           # optional: initial roll in degrees (or `roll: 1` in quarter turns)
+annotations: false   # optional: hide saved notes in this embed (default true)
 ```
 ````
 
@@ -107,8 +134,9 @@ height: 320
 when it scrolls into view and is disposed when it scrolls away, so a note with
 many embeds doesn't exhaust the browser's limited WebGL contexts.
 
-Annotations are keyed by file path, so notes added in the full view also appear
-in embeds of the same model, and vice versa.
+Annotations **and pinned measurements** are keyed by file path, so notes and
+measurements added in the full view also appear in embeds of the same model, and
+vice versa.
 
 ## Development
 
@@ -147,14 +175,18 @@ viewer/StepToThree.ts       occt result JSON -> THREE.Group + structure tree
 viewer/ViewerController.ts  Scene, camera, controls, picking, measure, dispose
 viewer/fitCamera.ts         Camera fit to bounding box
 viewer/params.ts            ReadStepFile default parameters
-ui/Toolbar.ts               Toolbar buttons
+ui/Toolbar.ts               Toolbar buttons + measurement-type strip
 ui/ViewCube.ts              Navigation cube
-ui/TreePanel.ts             Structure-tree panel
+ui/ViewControls.ts          Floating section + explode controls
+ui/TreePanel.ts             Structure-tree panel (select / frame / isolate)
 ui/PartInfoPanel.ts         Hover info panel
-ui/LabelLayer.ts            Projected HTML labels (measurement + annotations)
-ui/AnnotationLayer.ts       Annotation pins + editable labels
-ui/AnnotationsPanel.ts      Annotations list panel (hide / opacity)
+ui/LabelLayer.ts            Projected HTML labels + leader lines (screenshot draw)
+ui/AnnotationLayer.ts       Annotation pins + notes (markdown / link / colour)
+ui/AnnotationsPanel.ts      Annotations list panel (hide / opacity / filter)
+ui/MeasurementLayer.ts      Pinned (persistent) measurements
 annotations/AnnotationStore.ts  Per-file annotation persistence (plugin data)
+annotations/MeasurementStore.ts Per-file pinned-measurement persistence
+annotations/pluginData.ts   Serialized read-modify-write of data.json
 types.ts, occt-import-js.d.ts   occt typings + result shape
 ```
 

@@ -15,6 +15,10 @@ export interface StoredAnnotation {
   /** Leader offset from the anchor, in screen pixels (only used when leader). */
   ox?: number;
   oy?: number;
+  /** Category colour (hex, e.g. "#e5484d"). Defaults to the first category. */
+  color?: string;
+  /** Optional Obsidian link target (wikilink text) opened from the note. */
+  link?: string;
 }
 
 interface DataShape {

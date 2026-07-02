@@ -1,4 +1,4 @@
-import { setIcon, setTooltip } from "obsidian";
+import { MarkdownRenderer, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { ViewerController } from "../viewer/ViewerController";
 import { LabelLayer, LabelHandle } from "./LabelLayer";
@@ -7,6 +7,15 @@ import { AnnotationStore, StoredAnnotation } from "../annotations/AnnotationStor
 // Default leader offset (screen px) applied the first time a note is switched
 // to leader mode — placed up and to the right of the anchor.
 const DEFAULT_LEADER_OFFSET = { x: 72, y: -56 };
+
+/** Category colours a note can be tagged with (cycled from the swatch button). */
+export const ANNOT_CATEGORIES: { color: string; label: string }[] = [
+  { color: "#ffc531", label: "Note" },
+  { color: "#e5484d", label: "Issue" },
+  { color: "#30a46c", label: "OK" },
+  { color: "#3b82f6", label: "Info" },
+];
+const DEFAULT_COLOR = ANNOT_CATEGORIES[0].color;
 
 interface Live {
   data: StoredAnnotation;
@@ -20,19 +29,23 @@ export interface AnnotationItem {
   id: string;
   text: string;
   part: string;
+  color: string;
+  link?: string;
 }
 
 /**
  * Notes pinned to points on the model (design doc §1 extension). Each note is a
  * pin (a child of the model group, so it follows rolls) plus an editable HTML
- * label projected by the LabelLayer. Anchors are stored in model-local
- * coordinates and persisted per file path via AnnotationStore.
+ * label projected by the LabelLayer. Notes render markdown in read state, can be
+ * tagged with a category colour, and can link to another Obsidian note. Anchors
+ * are stored in model-local coordinates and persisted per file path.
  */
 export class AnnotationLayer {
   private items: Live[] = [];
   private saveTimer: number | null = null;
   private visible = true;
   private opacity = 1;
+  private filter: string | null = null;
   /** Fired when annotations are added/removed/edited (drives the list panel). */
   onChange: (() => void) | null = null;
 
@@ -41,6 +54,7 @@ export class AnnotationLayer {
     private labelLayer: LabelLayer,
     private store: AnnotationStore,
     private path: string,
+    private plugin: Plugin,
   ) {}
 
   async load(): Promise<void> {
@@ -72,6 +86,8 @@ export class AnnotationLayer {
       id: i.data.id,
       text: i.data.text,
       part: i.data.part ?? "",
+      color: i.data.color ?? DEFAULT_COLOR,
+      link: i.data.link,
     }));
   }
 
@@ -107,17 +123,34 @@ export class AnnotationLayer {
     return this.opacity;
   }
 
+  /** Show only notes of the given category colour (null = show all). */
+  setFilter(color: string | null): void {
+    this.filter = color;
+    for (const live of this.items) this.applyVisual(live);
+  }
+
+  getFilter(): string | null {
+    return this.filter;
+  }
+
   // --- Internals -----------------------------------------------------------
 
+  private matchesFilter(d: StoredAnnotation): boolean {
+    return !this.filter || (d.color ?? DEFAULT_COLOR) === this.filter;
+  }
+
   private applyVisual(live: Live): void {
-    live.pin.visible = this.visible;
+    const shown = this.visible && this.matchesFilter(live.data);
+    live.pin.visible = shown;
     const mat = (live.pin as THREE.Mesh).material as THREE.MeshBasicMaterial;
     if (mat) {
+      mat.color.set(live.data.color ?? DEFAULT_COLOR);
       mat.transparent = this.opacity < 1;
       mat.opacity = this.opacity;
     }
-    live.label.el.toggleClass("is-hidden", !this.visible);
+    live.label.el.toggleClass("is-hidden", !shown);
     live.label.el.style.opacity = String(this.opacity);
+    live.label.el.style.setProperty("--annot-color", live.data.color ?? DEFAULT_COLOR);
     this.applyModes(live);
   }
 
@@ -144,14 +177,33 @@ export class AnnotationLayer {
     const tools = activeDocument.createElement("div");
     tools.className = "step-viewer-annot-tools";
 
+    // Link chip (read state) + editable text + rendered markdown.
+    const linkChip = activeDocument.createElement("a");
+    linkChip.className = "step-viewer-annot-link";
+
+    const linkRow = activeDocument.createElement("div");
+    linkRow.className = "step-viewer-annot-linkrow";
+    linkRow.hide();
+    const linkInput = activeDocument.createElement("input");
+    linkInput.type = "text";
+    linkInput.placeholder = "Note to link, e.g. [[Design]]";
+    linkInput.value = d.link ?? "";
+    linkRow.appendChild(linkInput);
+
     const textEl = activeDocument.createElement("div");
     textEl.className = "step-viewer-annot-text";
     textEl.contentEditable = "true";
     textEl.textContent = d.text;
-    textEl.dataset.placeholder = "Note…";
+    textEl.dataset.placeholder = "Note… (markdown)";
+
+    const renderEl = activeDocument.createElement("div");
+    renderEl.className = "step-viewer-annot-render";
 
     body.appendChild(tools);
+    body.appendChild(linkChip);
+    body.appendChild(linkRow);
     body.appendChild(textEl);
+    body.appendChild(renderEl);
     el.appendChild(body);
 
     const label = this.labelLayer.add(
@@ -161,8 +213,55 @@ export class AnnotationLayer {
         d.leader
           ? { x: d.ox ?? DEFAULT_LEADER_OFFSET.x, y: d.oy ?? DEFAULT_LEADER_OFFSET.y }
           : null,
+      () => d.text,
     );
     const live: Live = { data: d, pin, label, textEl };
+
+    // Category colour: a swatch that cycles through the palette.
+    const colorBtn = this.toolButton(tools, "", "Change category colour", () => {
+      const cur = d.color ?? DEFAULT_COLOR;
+      const idx = ANNOT_CATEGORIES.findIndex((c) => c.color === cur);
+      const next = ANNOT_CATEGORIES[(idx + 1) % ANNOT_CATEGORIES.length];
+      d.color = next.color;
+      colorBtn.style.background = next.color;
+      setTooltip(colorBtn, `Category: ${next.label}`, { placement: "top" });
+      this.applyVisual(live);
+      this.scheduleSave();
+      this.onChange?.();
+    });
+    colorBtn.addClass("step-viewer-annot-swatch");
+    colorBtn.style.background = d.color ?? DEFAULT_COLOR;
+
+    // Link: toggle the input row; the chip (read state) opens the target.
+    const linkBtn = this.toolButton(tools, "link", "Link to a note", () => {
+      linkRow.toggle(!linkRow.isShown());
+      if (linkRow.isShown()) linkInput.focus();
+    });
+    const syncLink = (): void => {
+      const has = !!(d.link && d.link.trim());
+      linkBtn.toggleClass("is-active", has);
+      if (has) {
+        linkChip.setText(`↗ ${d.link}`);
+        linkChip.show();
+      } else {
+        linkChip.hide();
+      }
+    };
+    linkInput.addEventListener("input", () => {
+      d.link = linkInput.value.trim() || undefined;
+      syncLink();
+      this.scheduleSave();
+      this.onChange?.();
+    });
+    linkInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") linkRow.hide();
+    });
+    linkInput.addEventListener("pointerdown", (e) => e.stopPropagation());
+    linkChip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (d.link) this.plugin.app.workspace.openLinkText(d.link, this.path, false);
+    });
+    syncLink();
 
     // Per-note display toggles: hover-only visibility, and leader placement.
     const hoverBtn = this.toolButton(tools, "eye", "Show only on hover", () => {
@@ -191,21 +290,64 @@ export class AnnotationLayer {
     del.textContent = "×";
     tools.appendChild(del);
 
+    // Markdown read/edit toggle.
+    const enterEdit = (): void => {
+      renderEl.hide();
+      textEl.show();
+      textEl.focus();
+    };
+    const commit = (): void => {
+      d.text = textEl.textContent ?? "";
+      if (d.text.trim()) {
+        textEl.hide();
+        void this.renderMarkdown(d.text, renderEl);
+        renderEl.show();
+      } else {
+        renderEl.hide();
+        textEl.show();
+      }
+    };
+    // Initial state: rendered if there's text, editable if empty.
+    if (d.text.trim()) {
+      textEl.hide();
+      void this.renderMarkdown(d.text, renderEl);
+      renderEl.show();
+    } else {
+      renderEl.hide();
+    }
+    renderEl.addEventListener("click", (e) => {
+      const a = (e.target as HTMLElement).closest("a");
+      if (a) {
+        e.preventDefault();
+        e.stopPropagation();
+        const href = a.getAttribute("data-href") || a.getAttribute("href") || "";
+        if (href) this.plugin.app.workspace.openLinkText(href, this.path, false);
+        return;
+      }
+      enterEdit();
+    });
     textEl.addEventListener("input", () => {
       d.text = textEl.textContent ?? "";
       this.scheduleSave();
       this.onChange?.();
     });
+    textEl.addEventListener("blur", commit);
+
     del.addEventListener("click", (e) => {
       e.stopPropagation();
       this.remove(live);
     });
 
-    this.wireDrag(el, textEl, tools, d);
+    this.wireDrag(el, textEl, d);
 
     this.items.push(live);
     this.applyVisual(live);
     return live;
+  }
+
+  private async renderMarkdown(md: string, el: HTMLElement): Promise<void> {
+    el.empty();
+    await MarkdownRenderer.render(this.plugin.app, md, el, this.path, this.plugin);
   }
 
   /** Small icon toggle inside a note's toolbar strip. */
@@ -217,7 +359,7 @@ export class AnnotationLayer {
   ): HTMLElement {
     const btn = activeDocument.createElement("button");
     btn.className = "step-viewer-annot-tool clickable-icon";
-    setIcon(btn, icon);
+    if (icon) setIcon(btn, icon);
     setTooltip(btn, tooltip, { placement: "top" });
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -228,15 +370,10 @@ export class AnnotationLayer {
 
   /**
    * Pointer handling for a note. Always swallows canvas gestures (so editing
-   * doesn't orbit the model); in leader mode, dragging the toolbar strip moves
-   * the note and stores the new offset.
+   * doesn't orbit the model); in leader mode, dragging the note (not the text or
+   * buttons) moves it and stores the new offset.
    */
-  private wireDrag(
-    el: HTMLElement,
-    textEl: HTMLElement,
-    tools: HTMLElement,
-    d: StoredAnnotation,
-  ): void {
+  private wireDrag(el: HTMLElement, textEl: HTMLElement, d: StoredAnnotation): void {
     let drag: { x: number; y: number; ox: number; oy: number } | null = null;
 
     el.addEventListener("pointerdown", (e) => {
@@ -244,7 +381,7 @@ export class AnnotationLayer {
       if (!d.leader) return;
       const target = e.target as HTMLElement;
       if (target === textEl || textEl.contains(target)) return; // allow editing
-      if (target.closest("button")) return; // let buttons act
+      if (target.closest("button") || target.closest("input") || target.closest("a")) return;
       drag = {
         x: e.clientX,
         y: e.clientY,

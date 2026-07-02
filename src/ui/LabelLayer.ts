@@ -17,6 +17,7 @@ interface Item {
   world: () => THREE.Vector3;
   leader: LeaderGetter | null;
   line: SVGLineElement | null;
+  caption: (() => string) | null;
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -41,10 +42,15 @@ export class LabelLayer {
     this.container.appendChild(this.svg);
   }
 
-  add(el: HTMLElement, world: () => THREE.Vector3, leader: LeaderGetter | null = null): LabelHandle {
+  add(
+    el: HTMLElement,
+    world: () => THREE.Vector3,
+    leader: LeaderGetter | null = null,
+    caption: (() => string) | null = null,
+  ): LabelHandle {
     this.container.appendChild(el);
     const line = leader ? this.makeLine() : null;
-    const item: Item = { el, world, leader, line };
+    const item: Item = { el, world, leader, line, caption };
     this.items.push(item);
     return {
       el,
@@ -93,6 +99,48 @@ export class LabelLayer {
         if (it.line) it.line.style.display = "none";
       }
     }
+  }
+
+  /**
+   * Draw the labels' captions onto a 2D canvas context, for screenshots (the
+   * HTML overlay isn't part of the WebGL buffer). `scale` maps CSS px → canvas
+   * px. Only labels that declared a caption are drawn.
+   */
+  drawOnto(
+    ctx: CanvasRenderingContext2D,
+    camera: THREE.Camera,
+    w: number,
+    h: number,
+    scale: number,
+  ): void {
+    ctx.save();
+    ctx.font = `${Math.round(12 * scale)}px sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    for (const it of this.items) {
+      if (!it.caption) continue;
+      const text = it.caption();
+      if (!text) continue;
+      if (it.el.hasClass("is-hidden") || it.el.hasClass("step-viewer-label-offscreen")) continue;
+      this.v.copy(it.world()).project(camera);
+      if (this.v.z > 1 || this.v.z < -1) continue;
+      let x = (this.v.x * 0.5 + 0.5) * w;
+      let y = (-this.v.y * 0.5 + 0.5) * h;
+      const off = it.leader?.() ?? null;
+      if (off) {
+        x += off.x;
+        y += off.y;
+      }
+      x *= scale;
+      y *= scale;
+      const line = text.split("\n")[0];
+      const tw = ctx.measureText(line).width;
+      ctx.fillStyle = "rgba(20,20,20,0.72)";
+      ctx.fillRect(x - tw / 2 - 4 * scale, y - 9 * scale, tw + 8 * scale, 18 * scale);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(line, x, y);
+    }
+    ctx.restore();
   }
 
   dispose(): void {

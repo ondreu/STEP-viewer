@@ -67,7 +67,13 @@ export class MeasurementLayer {
     el.appendChild(del);
 
     const mid = a.clone().add(b).multiplyScalar(0.5);
-    const label = this.labelLayer.add(el, () => this.controller.localToWorld(mid));
+    const distText = formatMm(a.distanceTo(b));
+    const label = this.labelLayer.add(
+      el,
+      () => this.controller.localToWorld(mid),
+      null,
+      () => distText,
+    );
     const live: Live = { data: d, graphic, label };
 
     el.addEventListener("pointerdown", (e) => e.stopPropagation());

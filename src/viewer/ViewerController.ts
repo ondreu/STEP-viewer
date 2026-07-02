@@ -6,6 +6,7 @@ import { EDGES_TAG, MESH_TAG } from "./StepToThree";
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
 const HIGHLIGHT_COLOR = 0xff8a00;
+const SELECT_COLOR = 0x3b82f6;
 const SNAP_COLOR = 0x22cc66;
 const ANNOT_COLOR = 0xffc531;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
@@ -36,6 +37,35 @@ export interface AnnotatePick {
   part: string;
 }
 
+/** The kind of measurement being taken. */
+export type MeasureMode =
+  | "distance"
+  | "angle"
+  | "radius"
+  | "thickness"
+  | "point-face"
+  | "face-face";
+
+/** How many picks each measurement mode needs before it computes a result. */
+const MEASURE_PICKS: Record<MeasureMode, number> = {
+  distance: 2,
+  angle: 3,
+  radius: 3,
+  thickness: 1,
+  "point-face": 2,
+  "face-face": 2,
+};
+
+/** Initial prompt shown when a measurement mode is selected. */
+const MEASURE_PROMPTS: Record<MeasureMode, string> = {
+  distance: "Click two points on the model",
+  angle: "Click three points — the corner is the 2nd",
+  radius: "Click three points around a circular edge",
+  thickness: "Click a point on a face",
+  "point-face": "Click a face, then any point",
+  "face-face": "Click a point on each of two faces",
+};
+
 /**
  * Owns the three.js scene, camera, controls and render loop for one view
  * (design doc §7.2).
@@ -47,16 +77,37 @@ export interface AnnotatePick {
 export class ViewerController {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
+  private perspCamera: THREE.PerspectiveCamera;
+  private orthoCamera: THREE.OrthographicCamera;
+  private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  private orthographic = false;
   private controls: OrbitControls;
   private ro: ResizeObserver;
   private raf = 0;
   private model: THREE.Group | null = null;
+  private modelDiag = 1;
   private disposed = false;
 
   private wireframe = false;
   private edgesVisible = true;
   private transparent = false;
+
+  // Section (clipping) plane state.
+  private sectionEnabled = false;
+  private sectionAxis: "x" | "y" | "z" = "x";
+  private sectionFlip = false;
+  private sectionT = 0.5;
+  private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+
+  // Explode state: per top-level part, its base local position + outward dir.
+  private exploded = 0;
+  private explodeParts: { obj: THREE.Object3D; base: THREE.Vector3; dir: THREE.Vector3 }[] = [];
+
+  // Persistent selection highlight + isolate.
+  private selected: THREE.Object3D | null = null;
+  private selectOverlays: THREE.Mesh[] = [];
+  private isolated = false;
+  private isolateHidden: THREE.Object3D[] = [];
 
   // Meshes eligible for hover/measurement raycasting (edges excluded).
   private pickables: THREE.Mesh[] = [];
@@ -87,6 +138,8 @@ export class ViewerController {
   private previewGroup = new THREE.Group();
   private previewMesh: THREE.Mesh | null = null;
   private measurePoints: THREE.Vector3[] = [];
+  private measureNormals: (THREE.Vector3 | null)[] = [];
+  private measureMode: MeasureMode = "distance";
   private markerRadius = 1;
   private snapThreshold = 1;
   /** Called with the current measurement readout, or null to clear it. */
@@ -121,12 +174,16 @@ export class ViewerController {
     this.renderer.domElement.classList.add("step-viewer-canvas");
     host.appendChild(this.renderer.domElement);
 
+    this.renderer.localClippingEnabled = true; // for the section plane
     this.scene.background = null; // let CSS theme background show through
     this.scene.add(this.measureGroup);
     this.scene.add(this.previewGroup);
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1e6);
-    this.camera.position.set(1, 1, 1);
+    this.perspCamera = new THREE.PerspectiveCamera(45, 1, 0.01, 1e6);
+    this.perspCamera.position.set(1, 1, 1);
+    this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 1e6);
+    this.orthoCamera.position.set(1, 1, 1);
+    this.camera = this.perspCamera;
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -174,12 +231,27 @@ export class ViewerController {
 
     const box = new THREE.Box3().setFromObject(group);
     const diag = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
+    this.modelDiag = diag;
     this.markerRadius = Math.max(diag * 0.006, 1e-4);
     this.snapThreshold = this.markerRadius * 4;
+
+    // Record top-level parts for explode (outward direction from assembly centre).
+    this.explodeParts = [];
+    this.exploded = 0;
+    const center = box.getCenter(new THREE.Vector3());
+    for (const child of group.children) {
+      const cbox = new THREE.Box3().setFromObject(child);
+      if (cbox.isEmpty()) continue;
+      const dir = cbox.getCenter(new THREE.Vector3()).sub(center);
+      if (dir.lengthSq() < 1e-9) dir.set(0, 1, 0);
+      else dir.normalize();
+      this.explodeParts.push({ obj: child, base: child.position.clone(), dir });
+    }
 
     this.applyWireframe();
     this.applyEdgesVisibility();
     this.applyTransparency();
+    this.applySection();
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
   }
@@ -201,7 +273,7 @@ export class ViewerController {
     this.controls.update();
   }
 
-  getCamera(): THREE.PerspectiveCamera {
+  getCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
     return this.camera;
   }
 
@@ -234,6 +306,243 @@ export class ViewerController {
    */
   getModelQuaternion(): THREE.Quaternion {
     return this.model ? this.model.quaternion.clone() : new THREE.Quaternion();
+  }
+
+  // --- Camera projection ---------------------------------------------------
+
+  /** Switch between perspective and orthographic projection, preserving view. */
+  setProjection(ortho: boolean): boolean {
+    if (ortho === this.orthographic) return this.orthographic;
+
+    const target = this.controls.target.clone();
+    const old = this.camera;
+    const offsetVec = old.position.clone().sub(target);
+    const dist = offsetVec.length() || 1;
+    const dir = offsetVec.clone().normalize();
+    const aspect = (this.host.clientWidth || 1) / (this.host.clientHeight || 1);
+    const fov = (this.perspCamera.fov * Math.PI) / 180;
+
+    if (ortho) {
+      // Match the perspective view's visible height at the target distance.
+      const halfV = Math.tan(fov / 2) * dist;
+      this.orthoCamera.top = halfV;
+      this.orthoCamera.bottom = -halfV;
+      this.orthoCamera.left = -halfV * aspect;
+      this.orthoCamera.right = halfV * aspect;
+      this.orthoCamera.zoom = 1;
+      const depth = Math.max(dist, halfV * 4, this.modelDiag * 2);
+      this.orthoCamera.position.copy(target).addScaledVector(dir, depth);
+      this.orthoCamera.up.copy(old.up);
+      this.orthoCamera.near = 0.001;
+      this.orthoCamera.far = depth * 100;
+      this.orthoCamera.updateProjectionMatrix();
+      this.camera = this.orthoCamera;
+    } else {
+      const halfV = ((this.orthoCamera.top - this.orthoCamera.bottom) / 2) / this.orthoCamera.zoom;
+      const dist2 = halfV / Math.tan(fov / 2) || dist;
+      this.perspCamera.position.copy(target).addScaledVector(dir, dist2);
+      this.perspCamera.up.copy(old.up);
+      this.perspCamera.aspect = aspect;
+      this.perspCamera.near = Math.max(dist2 / 1000, 0.001);
+      this.perspCamera.far = dist2 * 1000;
+      this.perspCamera.updateProjectionMatrix();
+      this.camera = this.perspCamera;
+    }
+
+    this.orthographic = ortho;
+    this.rebuildControls(target);
+    return this.orthographic;
+  }
+
+  toggleProjection(): boolean {
+    return this.setProjection(!this.orthographic);
+  }
+
+  isOrthographic(): boolean {
+    return this.orthographic;
+  }
+
+  /** Rebuild OrbitControls for the current active camera (target preserved). */
+  private rebuildControls(target: THREE.Vector3): void {
+    this.controls.dispose();
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
+    this.controls.target.copy(target);
+    this.controls.update();
+  }
+
+  // --- Section (clipping) plane -------------------------------------------
+
+  toggleSection(): boolean {
+    return this.setSectionEnabled(!this.sectionEnabled);
+  }
+
+  setSectionEnabled(on: boolean): boolean {
+    this.sectionEnabled = on;
+    this.updateSectionPlane();
+    this.applySection();
+    return this.sectionEnabled;
+  }
+
+  setSectionAxis(axis: "x" | "y" | "z"): void {
+    this.sectionAxis = axis;
+    this.updateSectionPlane();
+  }
+
+  setSectionPosition(t: number): void {
+    this.sectionT = Math.min(Math.max(t, 0), 1);
+    this.updateSectionPlane();
+  }
+
+  setSectionFlip(flip: boolean): void {
+    this.sectionFlip = flip;
+    this.updateSectionPlane();
+  }
+
+  isSectioning(): boolean {
+    return this.sectionEnabled;
+  }
+  getSectionAxis(): "x" | "y" | "z" {
+    return this.sectionAxis;
+  }
+  isSectionFlipped(): boolean {
+    return this.sectionFlip;
+  }
+
+  /** Recompute the clip plane from the model's world bounds + slider position. */
+  private updateSectionPlane(): void {
+    if (!this.model) return;
+    const box = new THREE.Box3().setFromObject(this.model);
+    if (box.isEmpty()) return;
+    const axis = this.sectionAxis;
+    const lo = box.min[axis];
+    const hi = box.max[axis];
+    const pos = lo + (hi - lo) * this.sectionT;
+    const n = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+    if (this.sectionFlip) n.negate();
+    this.sectionPlane.normal.copy(n);
+    // distance(p) = n·p + constant, keeps p where distance ≥ 0.
+    this.sectionPlane.constant = -(n[axis] * pos);
+  }
+
+  /** Apply (or clear) the clip plane on model surfaces + edges only. */
+  private applySection(): void {
+    if (!this.model) return;
+    const planes = this.sectionEnabled ? [this.sectionPlane] : [];
+    this.model.traverse((o) => {
+      if (!(o.userData?.[MESH_TAG] || o.userData?.[EDGES_TAG])) return;
+      const material = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(material) ? material : [material]) {
+        if (!m) continue;
+        m.clippingPlanes = planes;
+        m.clipShadows = true;
+        m.needsUpdate = true;
+      }
+    });
+  }
+
+  // --- Explode -------------------------------------------------------------
+
+  /** True when the model has more than one top-level part to spread apart. */
+  isExplodable(): boolean {
+    return this.explodeParts.length > 1;
+  }
+
+  getExplode(): number {
+    return this.exploded;
+  }
+
+  /** Spread top-level parts outward from the assembly centre. `amount` 0..1. */
+  setExplode(amount: number): void {
+    this.exploded = amount;
+    const spread = this.modelDiag * amount;
+    for (const p of this.explodeParts) {
+      p.obj.position.copy(p.base).addScaledVector(p.dir, spread);
+    }
+  }
+
+  // --- Selection highlight + isolate --------------------------------------
+
+  /** Highlight (persistent overlay) all meshes under `object`, or clear it. */
+  setSelected(object: THREE.Object3D | null): void {
+    this.clearSelection();
+    this.selected = object;
+    if (object) {
+      object.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.userData?.[MESH_TAG]) return;
+        const mat = new THREE.MeshBasicMaterial({
+          color: SELECT_COLOR,
+          transparent: true,
+          opacity: 0.4,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+        const overlay = new THREE.Mesh(mesh.geometry, mat);
+        overlay.renderOrder = 2;
+        overlay.raycast = () => {};
+        mesh.add(overlay);
+        this.selectOverlays.push(overlay);
+      });
+    }
+    if (this.isolated) this.applyIsolate();
+  }
+
+  getSelected(): THREE.Object3D | null {
+    return this.selected;
+  }
+
+  private clearSelection(): void {
+    for (const overlay of this.selectOverlays) {
+      overlay.parent?.remove(overlay);
+      (overlay.material as THREE.Material).dispose();
+    }
+    this.selectOverlays = [];
+    this.selected = null;
+  }
+
+  toggleIsolate(): boolean {
+    this.isolated = !this.isolated;
+    this.applyIsolate();
+    return this.isolated;
+  }
+
+  isIsolated(): boolean {
+    return this.isolated;
+  }
+
+  /** Hide everything except the selected subtree (restores on disable). */
+  private applyIsolate(): void {
+    for (const o of this.isolateHidden) o.visible = true;
+    this.isolateHidden = [];
+    if (!this.isolated || !this.selected || !this.model) return;
+    const keep = new Set<THREE.Object3D>();
+    this.selected.traverse((o) => keep.add(o));
+    let p: THREE.Object3D | null = this.selected;
+    while (p) {
+      keep.add(p);
+      p = p.parent;
+    }
+    this.model.traverse((o) => {
+      if ((o as THREE.Mesh).userData?.[MESH_TAG] && !keep.has(o) && o.visible) {
+        o.visible = false;
+        this.isolateHidden.push(o);
+      }
+    });
+  }
+
+  // --- Screenshot ----------------------------------------------------------
+
+  /**
+   * Render one frame and return it as a PNG data URL. Rendering right before the
+   * read keeps the drawing buffer valid without `preserveDrawingBuffer`.
+   */
+  captureImage(): string {
+    this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL("image/png");
   }
 
   /** Register a resource to dispose when this controller is disposed. */
@@ -315,6 +624,22 @@ export class ViewerController {
     this.setPreview(null, false);
   }
 
+  /** Roll the model `quarters`×90° about the current view axis, without animating
+   *  (used to apply an embed's initial rotation). */
+  rollInstant(quarters: number): void {
+    if (!this.model || !quarters) return;
+    const axis = new THREE.Vector3();
+    this.camera.getWorldDirection(axis);
+    const pivot = this.controls.target.clone();
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, (quarters * Math.PI) / 2);
+    const endPos = this.model.position.clone().sub(pivot).applyQuaternion(q).add(pivot);
+    this.model.position.copy(endPos);
+    this.model.quaternion.premultiply(q);
+    this.setHover(null);
+    this.clearMeasurement();
+    this.setPreview(null, false);
+  }
+
   private advanceRoll(dt: number): void {
     if (!this.roll.active || !this.model) return;
     this.roll.t = Math.min(this.roll.t + dt / ROLL_DURATION, 1);
@@ -349,12 +674,23 @@ export class ViewerController {
     this.host.toggleClass("is-measuring", this.measureEnabled);
     if (this.measureEnabled) {
       this.setHover(null); // hover highlight is suppressed while measuring
-      this.onMeasureUpdate?.("Click two points on the model");
+      this.onMeasureUpdate?.(MEASURE_PROMPTS[this.measureMode]);
     } else {
       this.clearMeasurement();
       this.setPreview(null, false);
     }
     return this.measureEnabled;
+  }
+
+  /** Choose the active measurement type (clears any in-progress picks). */
+  setMeasureMode(mode: MeasureMode): void {
+    this.measureMode = mode;
+    this.clearMeasurement();
+    if (this.measureEnabled) this.onMeasureUpdate?.(MEASURE_PROMPTS[mode]);
+  }
+
+  getMeasureMode(): MeasureMode {
+    return this.measureMode;
   }
 
   /** Enable/disable annotate mode (click a point to pin a note). */
@@ -560,51 +896,192 @@ export class ViewerController {
     const resolved = this.raycastResolve(ndc);
     if (!resolved) return;
 
-    // A completed A–B pair starts fresh on the next click.
-    if (this.measurePoints.length >= 2) this.clearMeasurement(true);
+    const need = MEASURE_PICKS[this.measureMode];
+    // A completed set starts fresh on the next click.
+    if (this.measurePoints.length >= need) this.clearMeasurement(true);
+
+    // Face-based modes require a surface normal on the defining pick.
+    const needsNormalFirst =
+      this.measureMode === "thickness" ||
+      this.measureMode === "point-face" ||
+      this.measureMode === "face-face";
+    if (needsNormalFirst && this.measurePoints.length === 0 && !resolved.normal) {
+      this.onMeasureUpdate?.("Click directly on a face");
+      return;
+    }
 
     this.measurePoints.push(resolved.point);
+    this.measureNormals.push(resolved.normal);
     this.addMarker(resolved.point);
 
-    if (this.measurePoints.length === 2) {
-      const [a, b] = this.measurePoints;
-      this.drawMeasureLine(a, b);
-      const dist = a.distanceTo(b);
-      const dx = Math.abs(b.x - a.x);
-      const dy = Math.abs(b.y - a.y);
-      const dz = Math.abs(b.z - a.z);
-      this.onMeasureUpdate?.(
-        `≈ ${formatMm(dist)} (approx.)  ·  Δ ${num(dx)} / ${num(dy)} / ${num(dz)} mm (X/Y/Z)`,
-      );
-      // Number labels beside each segment (main + axis legs).
-      const c1 = new THREE.Vector3(b.x, a.y, a.z);
-      const c2 = new THREE.Vector3(b.x, b.y, a.z);
-      const labels: MeasureLabel[] = [
-        { pos: mid(a, b), text: formatMm(dist), color: MEASURE_COLOR },
-      ];
-      if (dx > 1e-6) labels.push({ pos: mid(a, c1), text: `${num(dx)} mm`, color: AXIS_COLORS.x });
-      if (dy > 1e-6) labels.push({ pos: mid(c1, c2), text: `${num(dy)} mm`, color: AXIS_COLORS.y });
-      if (dz > 1e-6) labels.push({ pos: mid(c2, b), text: `${num(dz)} mm`, color: AXIS_COLORS.z });
-      this.onMeasureLabels?.(labels);
-      this.onMeasureCanKeep?.(true);
-    } else {
-      this.onMeasureUpdate?.(
-        resolved.snapped
-          ? "Snapped — click the second point"
-          : "First point set — click the second point",
-      );
+    if (this.measurePoints.length < need) {
+      this.onMeasureUpdate?.(this.progressPrompt(resolved.snapped));
+      return;
     }
+    this.computeMeasurement();
+  }
+
+  private progressPrompt(snapped: boolean): string {
+    const got = this.measurePoints.length;
+    const need = MEASURE_PICKS[this.measureMode];
+    const prefix = snapped ? "Snapped — " : "";
+    return `${prefix}${got}/${need} points — ${MEASURE_PROMPTS[this.measureMode]}`;
+  }
+
+  /** Dispatch to the per-mode result once enough points are collected. */
+  private computeMeasurement(): void {
+    switch (this.measureMode) {
+      case "distance":
+        return this.computeDistance();
+      case "angle":
+        return this.computeAngle();
+      case "radius":
+        return this.computeRadius();
+      case "thickness":
+        return this.computeThickness();
+      case "point-face":
+        return this.computePointFace();
+      case "face-face":
+        return this.computeFaceFace();
+    }
+  }
+
+  private computeDistance(): void {
+    const [a, b] = this.measurePoints;
+    this.drawMeasureLine(a, b);
+    const dist = a.distanceTo(b);
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+    const dz = Math.abs(b.z - a.z);
+    this.onMeasureUpdate?.(
+      `≈ ${formatMm(dist)} (approx.)  ·  Δ ${num(dx)} / ${num(dy)} / ${num(dz)} mm (X/Y/Z)`,
+    );
+    const c1 = new THREE.Vector3(b.x, a.y, a.z);
+    const c2 = new THREE.Vector3(b.x, b.y, a.z);
+    const labels: MeasureLabel[] = [
+      { pos: mid(a, b), text: formatMm(dist), color: MEASURE_COLOR },
+    ];
+    if (dx > 1e-6) labels.push({ pos: mid(a, c1), text: `${num(dx)} mm`, color: AXIS_COLORS.x });
+    if (dy > 1e-6) labels.push({ pos: mid(c1, c2), text: `${num(dy)} mm`, color: AXIS_COLORS.y });
+    if (dz > 1e-6) labels.push({ pos: mid(c2, b), text: `${num(dz)} mm`, color: AXIS_COLORS.z });
+    this.onMeasureLabels?.(labels);
+    this.onMeasureCanKeep?.(true); // only distance can be pinned persistently
+  }
+
+  private computeAngle(): void {
+    const [a, v, b] = this.measurePoints;
+    this.addLeg(v, a, MEASURE_COLOR);
+    this.addLeg(v, b, MEASURE_COLOR);
+    const u1 = a.clone().sub(v);
+    const u2 = b.clone().sub(v);
+    if (u1.lengthSq() < 1e-12 || u2.lengthSq() < 1e-12) {
+      this.onMeasureUpdate?.("Points are too close — try again");
+      return;
+    }
+    const deg = THREE.MathUtils.radToDeg(u1.angleTo(u2));
+    this.onMeasureUpdate?.(`∠ ≈ ${deg.toFixed(1)}° (approx.)`);
+    this.onMeasureLabels?.([{ pos: v, text: `${deg.toFixed(1)}°`, color: MEASURE_COLOR }]);
+  }
+
+  private computeRadius(): void {
+    const circle = circleFrom3Points(
+      this.measurePoints[0],
+      this.measurePoints[1],
+      this.measurePoints[2],
+    );
+    if (!circle) {
+      this.onMeasureUpdate?.("Those points are collinear — try again");
+      return;
+    }
+    const { center, radius } = circle;
+    this.addMarker(center);
+    for (const p of this.measurePoints) this.addLeg(center, p, MEASURE_COLOR);
+    this.onMeasureUpdate?.(
+      `R ≈ ${formatMm(radius)}  ·  ⌀ ≈ ${formatMm(radius * 2)} (approx.)`,
+    );
+    this.onMeasureLabels?.([
+      { pos: mid(center, this.measurePoints[0]), text: `R ${formatMm(radius)}`, color: MEASURE_COLOR },
+    ]);
+  }
+
+  private computeThickness(): void {
+    const p = this.measurePoints[0];
+    const n = this.measureNormals[0];
+    if (!n) {
+      this.onMeasureUpdate?.("Could not read the surface normal — try again");
+      return;
+    }
+    // Shoot a ray into the material (opposite the outward normal) and take the
+    // first surface it exits through. A small offset avoids re-hitting the face.
+    const inward = n.clone().negate();
+    const eps = this.markerRadius * 0.1;
+    this.raycaster.set(p.clone().addScaledVector(inward, eps), inward);
+    this.raycaster.far = this.modelDiag * 2;
+    const hits = this.raycaster
+      .intersectObjects(this.pickables, false)
+      .filter((h) => h.distance > eps * 2);
+    this.raycaster.far = Infinity; // restore for hover/pick raycasting
+    if (hits.length === 0) {
+      this.onMeasureUpdate?.("No opposite face found below that point");
+      return;
+    }
+    const far = hits[0].point.clone();
+    this.addMarker(far);
+    this.addLeg(p, far, MEASURE_COLOR);
+    const t = p.distanceTo(far);
+    this.onMeasureUpdate?.(`Thickness ≈ ${formatMm(t)} (approx.)`);
+    this.onMeasureLabels?.([{ pos: mid(p, far), text: formatMm(t), color: MEASURE_COLOR }]);
+  }
+
+  private computePointFace(): void {
+    const face = this.measurePoints[0];
+    const n = this.measureNormals[0];
+    const pt = this.measurePoints[1];
+    if (!n) {
+      this.onMeasureUpdate?.("First click must be on a face — try again");
+      return;
+    }
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, face);
+    const foot = plane.projectPoint(pt, new THREE.Vector3());
+    this.addMarker(foot);
+    this.addLeg(pt, foot, MEASURE_COLOR);
+    const d = Math.abs(plane.distanceToPoint(pt));
+    this.onMeasureUpdate?.(`Point → face ≈ ${formatMm(d)} (perpendicular, approx.)`);
+    this.onMeasureLabels?.([{ pos: mid(pt, foot), text: formatMm(d), color: MEASURE_COLOR }]);
+  }
+
+  private computeFaceFace(): void {
+    const a = this.measurePoints[0];
+    const na = this.measureNormals[0];
+    const b = this.measurePoints[1];
+    if (!na) {
+      this.onMeasureUpdate?.("First click must be on a face — try again");
+      return;
+    }
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(na, a);
+    const foot = plane.projectPoint(b, new THREE.Vector3());
+    this.addMarker(foot);
+    this.addLeg(b, foot, MEASURE_COLOR);
+    const d = Math.abs(plane.distanceToPoint(b));
+    this.onMeasureUpdate?.(`Face → face ≈ ${formatMm(d)} (along 1st normal, approx.)`);
+    this.onMeasureLabels?.([{ pos: mid(b, foot), text: formatMm(d), color: MEASURE_COLOR }]);
   }
 
   /** Raycast at `ndc` and resolve the hit to a (possibly snapped) point. */
   private raycastResolve(
     ndc: THREE.Vector2,
-  ): { point: THREE.Vector3; snapped: boolean; object: THREE.Object3D } | null {
+  ): {
+    point: THREE.Vector3;
+    snapped: boolean;
+    object: THREE.Object3D;
+    normal: THREE.Vector3 | null;
+  } | null {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hits = this.raycaster.intersectObjects(this.pickables, false);
     if (hits.length === 0) return null;
-    const object = hits[0].object;
-    let point = hits[0].point.clone();
+    const hit = hits[0];
+    const object = hit.object;
+    let point = hit.point.clone();
     let snapped = false;
     if (this.snapEnabled) {
       const s = this.snapPoint(object as THREE.Mesh, point);
@@ -613,7 +1090,15 @@ export class ViewerController {
         snapped = true;
       }
     }
-    return { point, snapped, object };
+    // World-space face normal (used by thickness / face-based measurements).
+    let normal: THREE.Vector3 | null = null;
+    if (hit.face) {
+      normal = hit.face.normal
+        .clone()
+        .transformDirection(object.matrixWorld)
+        .normalize();
+    }
+    return { point, snapped, object, normal };
   }
 
   /**
@@ -746,7 +1231,7 @@ export class ViewerController {
    * or null if fewer than two points are set. Used to pin it persistently.
    */
   getCompletedMeasurement(): { a: THREE.Vector3; b: THREE.Vector3 } | null {
-    if (this.measurePoints.length < 2) return null;
+    if (this.measureMode !== "distance" || this.measurePoints.length < 2) return null;
     return { a: this.measurePoints[0].clone(), b: this.measurePoints[1].clone() };
   }
 
@@ -791,6 +1276,7 @@ export class ViewerController {
   /** Remove markers/line. `keepReadout` avoids clobbering the pick prompt. */
   private clearMeasurement(keepReadout = false): void {
     this.measurePoints = [];
+    this.measureNormals = [];
     this.onMeasureCanKeep?.(false);
     for (const child of [...this.measureGroup.children]) {
       const m = child as THREE.Mesh;
@@ -803,7 +1289,7 @@ export class ViewerController {
     this.onMeasureLabels?.([]);
     if (!keepReadout) {
       this.onMeasureUpdate?.(
-        this.measureEnabled ? "Click two points on the model" : null,
+        this.measureEnabled ? MEASURE_PROMPTS[this.measureMode] : null,
       );
     }
   }
@@ -813,8 +1299,16 @@ export class ViewerController {
     const h = this.host.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    const aspect = w / h;
+    this.perspCamera.aspect = aspect;
+    this.perspCamera.updateProjectionMatrix();
+    // Keep the ortho camera's vertical extent; adjust horizontal to the aspect.
+    const halfV = (this.orthoCamera.top - this.orthoCamera.bottom) / 2 || 1;
+    this.orthoCamera.top = halfV;
+    this.orthoCamera.bottom = -halfV;
+    this.orthoCamera.left = -halfV * aspect;
+    this.orthoCamera.right = halfV * aspect;
+    this.orthoCamera.updateProjectionMatrix();
   }
 
   private animate = (): void => {
@@ -897,4 +1391,34 @@ function mid(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+/**
+ * Circumscribed circle of three points in 3D (centre + radius), or null if the
+ * points are (near-)collinear. Used to estimate a hole's radius/diameter from
+ * three picks on its edge.
+ */
+function circleFrom3Points(
+  p1: THREE.Vector3,
+  p2: THREE.Vector3,
+  p3: THREE.Vector3,
+): { center: THREE.Vector3; radius: number } | null {
+  const v1 = p2.clone().sub(p1);
+  const v2 = p3.clone().sub(p1);
+  const cross = v1.clone().cross(v2);
+  const crossLenSq = cross.lengthSq();
+  if (crossLenSq < 1e-12) return null; // collinear
+
+  const v1Sq = v1.lengthSq();
+  const v2Sq = v2.lengthSq();
+  // Centre = p1 + (‖v1‖²·(v2×n) + ‖v2‖²·(n×v1)) / (2‖n‖²), n = v1×v2.
+  const term = v2
+    .clone()
+    .multiplyScalar(v1Sq)
+    .sub(v1.clone().multiplyScalar(v2Sq))
+    .cross(cross)
+    .divideScalar(2 * crossLenSq);
+  const center = p1.clone().add(term);
+  const radius = center.distanceTo(p1);
+  return { center, radius };
 }
