@@ -1,6 +1,6 @@
 {
   "name": "obsidian-step-viewer",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "View STEP (.step/.stp) CAD models in a 3D viewer inside Obsidian.",
   "main": "main.js",
   "scripts": {

@@ -26,12 +26,16 @@ export function createAnnotationsPanel(
 
   const eye = header.createEl("button", { cls: "step-viewer-btn clickable-icon" });
   const syncEye = () => {
-    setIcon(eye, layer.isVisible() ? "eye" : "eye-off");
-    setTooltip(eye, layer.isVisible() ? "Hide annotations" : "Show annotations");
-    eye.toggleClass("is-active", !layer.isVisible());
+    const shown = layer.isVisible();
+    setIcon(eye, shown ? "eye" : "eye-off");
+    setTooltip(eye, shown ? "Hide annotations & measurements" : "Show annotations & measurements");
+    eye.toggleClass("is-active", !shown);
   };
   eye.addEventListener("click", () => {
-    layer.setVisible(!layer.isVisible());
+    // One toggle governs both notes and pinned measurements in the 3D view.
+    const next = !layer.isVisible();
+    layer.setVisible(next);
+    measurements.setVisible(next);
     syncEye();
   });
   syncEye();

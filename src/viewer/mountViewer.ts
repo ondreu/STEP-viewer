@@ -117,9 +117,13 @@ export function mountViewer(
     if (part) part.material = meta.materialFor(part.name);
     return part;
   };
-  controller.onHover = (part) => info.update(enrich(part));
+  // The selected part's info stays pinned in the card; hovering another part
+  // shows that part temporarily, and moving off it falls back to the selection.
+  let selectedInfo: PartInfo | null = null;
+  controller.onHover = (part) => info.update(enrich(part) ?? selectedInfo);
   controller.onSelectPart = (part) => {
-    info.update(enrich(part));
+    selectedInfo = enrich(part);
+    info.update(selectedInfo);
     treePanel.reveal(part?.object ?? null);
   };
 

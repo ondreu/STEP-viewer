@@ -104,6 +104,12 @@ export class LabelLayer {
     const w = dom.clientWidth;
     const h = dom.clientHeight;
     for (const it of this.items) {
+      // A hidden label (category filter / hide-all) must also drop its leader
+      // line — the SVG line lives outside the label element's display:none.
+      if (it.el.hasClass("is-hidden")) {
+        it.line?.classList.add("is-hidden");
+        continue;
+      }
       this.v.copy(it.world()).project(camera);
       if (this.v.z > 1 || this.v.z < -1) {
         it.el.toggleClass("step-viewer-label-offscreen", true);
