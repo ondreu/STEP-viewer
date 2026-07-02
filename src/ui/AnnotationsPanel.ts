@@ -95,8 +95,13 @@ export function createAnnotationsPanel(
 
     for (const item of items) {
       const row = body.createDiv({ cls: "step-viewer-annots-row" });
-      const dot = row.createSpan({ cls: "step-viewer-annots-dot" });
+      const dot = row.createEl("button", { cls: "step-viewer-annots-dot" });
       dot.style.background = item.color;
+      setTooltip(dot, "Change colour");
+      dot.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openColorPopover(dot, item.color, (c) => layer.setColor(item.id, c));
+      });
       const main = row.createDiv({ cls: "step-viewer-annots-main" });
       main.createDiv({
         cls: "step-viewer-annots-text",
@@ -149,4 +154,52 @@ export function createAnnotationsPanel(
 
   render();
   return { el: panel, render };
+}
+
+/**
+ * Popover of category swatches + a custom colour picker, anchored under `dot`.
+ * Calls `onPick` with the chosen hex (live for the custom picker). Appended to
+ * the document body (fixed-positioned) so the panel's scroll clipping and
+ * re-renders don't hide or clip it. Closes on an outside click.
+ */
+function openColorPopover(
+  dot: HTMLElement,
+  current: string,
+  onPick: (color: string) => void,
+): void {
+  activeDocument.querySelectorAll(".step-viewer-annots-pop").forEach((e) => e.remove());
+
+  const pop = activeDocument.body.createDiv({ cls: "step-viewer-annots-pop" });
+  const rect = dot.getBoundingClientRect();
+  pop.style.left = `${rect.left}px`;
+  pop.style.top = `${rect.bottom + 4}px`;
+
+  for (const cat of ANNOT_CATEGORIES) {
+    const sw = pop.createEl("button", { cls: "step-viewer-annot-palette-swatch" });
+    sw.style.background = cat.color;
+    setTooltip(sw, cat.label);
+    sw.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onPick(cat.color);
+      pop.remove();
+    });
+  }
+
+  const custom = pop.createEl("input", {
+    cls: "step-viewer-annot-palette-custom",
+    attr: { type: "color", value: /^#[0-9a-f]{6}$/i.test(current) ? current : ANNOT_CATEGORIES[0].color },
+  });
+  setTooltip(custom, "Custom colour");
+  custom.addEventListener("click", (e) => e.stopPropagation());
+  custom.addEventListener("input", () => onPick(custom.value));
+  custom.addEventListener("change", () => pop.remove());
+
+  // Close on any click outside the popover (capture so it beats other handlers).
+  const close = (e: Event): void => {
+    if (!pop.contains(e.target as Node)) {
+      pop.remove();
+      activeDocument.removeEventListener("pointerdown", close, true);
+    }
+  };
+  activeDocument.addEventListener("pointerdown", close, true);
 }

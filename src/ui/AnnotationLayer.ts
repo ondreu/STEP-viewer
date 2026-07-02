@@ -24,6 +24,8 @@ interface Live {
   pin: THREE.Object3D;
   label: LabelHandle;
   textEl: HTMLElement;
+  /** Repaint the card's own colour swatch after an external colour change. */
+  repaintSwatch?: () => void;
 }
 
 /** Row data for the annotations list panel. */
@@ -113,6 +115,17 @@ export class AnnotationLayer {
   removeById(id: string): void {
     const live = this.items.find((i) => i.data.id === id);
     if (live) this.remove(live);
+  }
+
+  /** Recolour a note (hex string) from the list panel; persists + refreshes. */
+  setColor(id: string, color: string): void {
+    const live = this.items.find((i) => i.data.id === id);
+    if (!live) return;
+    live.data.color = color;
+    live.repaintSwatch?.(); // keep the card's own swatch button in sync
+    this.applyVisual(live);
+    this.scheduleSave();
+    this.onChange?.();
   }
 
   setVisible(v: boolean): void {
@@ -299,6 +312,7 @@ export class AnnotationLayer {
     custom.addEventListener("change", () => palette.hide());
     palette.appendChild(custom);
     paintSwatch();
+    live.repaintSwatch = paintSwatch;
 
     // Link: toggle the input row; the chip (read state) opens the target.
     const linkBtn = this.toolButton(tools, "link", "Link to a note", () => {

@@ -716,10 +716,41 @@
 
 .step-viewer-annots-dot {
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  margin-top: 4px;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
   border-radius: 50%;
+  cursor: pointer;
+}
+
+button.step-viewer-annots-dot:hover {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* Measurement rows use the dot slot for a ruler glyph, not a colour button. */
+.step-viewer-annots-mdot {
+  cursor: default;
+  border: none;
+}
+
+button.step-viewer-annots-mdot:hover {
+  outline: none;
+}
+
+/* Colour-picker popover opened from a list row's dot. */
+.step-viewer-annots-pop {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  gap: var(--size-2-1);
+  padding: var(--size-2-1);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  box-shadow: var(--shadow-m);
 }
 
 /* --- Part info panel (hover) --- */
