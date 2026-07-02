@@ -48,6 +48,9 @@ export class AnnotationLayer {
   private visible = true;
   private opacity = 1;
   private filter: string | null = null;
+  // When isolate is active, only notes whose anchor falls inside this world box
+  // (the isolated part's bounds) are shown; null = no isolate restriction.
+  private isolateBox: THREE.Box3 | null = null;
   // Owns the markdown-render child components so they're freed when this view
   // closes, not only when the plugin unloads.
   private mdComponent = new Component();
@@ -140,14 +143,33 @@ export class AnnotationLayer {
     return this.filter;
   }
 
+  /** Restrict visible notes to those anchored inside `kept` (isolate), or clear
+   *  the restriction when `kept` is null. */
+  setIsolate(kept: THREE.Object3D | null): void {
+    if (!kept) {
+      this.isolateBox = null;
+    } else {
+      const box = new THREE.Box3().setFromObject(kept);
+      const pad = box.getSize(new THREE.Vector3()).length() * 0.01 || 1e-4;
+      box.expandByScalar(pad);
+      this.isolateBox = box;
+    }
+    for (const live of this.items) this.applyVisual(live);
+  }
+
   // --- Internals -----------------------------------------------------------
 
   private matchesFilter(d: StoredAnnotation): boolean {
     return !this.filter || (d.color ?? DEFAULT_COLOR) === this.filter;
   }
 
+  private matchesIsolate(live: Live): boolean {
+    if (!this.isolateBox) return true;
+    return this.isolateBox.containsPoint(live.pin.getWorldPosition(new THREE.Vector3()));
+  }
+
   private applyVisual(live: Live): void {
-    const shown = this.visible && this.matchesFilter(live.data);
+    const shown = this.visible && this.matchesFilter(live.data) && this.matchesIsolate(live);
     live.pin.visible = shown;
     const mat = (live.pin as THREE.Mesh).material as THREE.MeshBasicMaterial;
     if (mat) {
@@ -156,7 +178,7 @@ export class AnnotationLayer {
       mat.opacity = this.opacity;
     }
     live.label.el.toggleClass("is-hidden", !shown);
-    live.label.el.style.opacity = String(this.opacity);
+    live.label.setOpacity(this.opacity);
     live.label.el.style.setProperty("--annot-color", live.data.color ?? DEFAULT_COLOR);
     this.applyModes(live);
   }
@@ -257,6 +279,25 @@ export class AnnotationLayer {
       });
       palette.appendChild(sw);
     }
+
+    // Custom colour: a native picker for any value beyond the four presets, so
+    // notes aren't limited to the category swatches.
+    const custom = activeDocument.createElement("input");
+    custom.type = "color";
+    custom.className = "step-viewer-annot-palette-custom";
+    custom.value = hexOr(d.color, DEFAULT_COLOR);
+    setTooltip(custom, "Custom colour", { placement: "top" });
+    custom.addEventListener("click", (e) => e.stopPropagation());
+    custom.addEventListener("pointerdown", (e) => e.stopPropagation());
+    custom.addEventListener("input", () => {
+      d.color = custom.value;
+      paintSwatch();
+      this.applyVisual(live);
+      this.scheduleSave();
+      this.onChange?.();
+    });
+    custom.addEventListener("change", () => palette.hide());
+    palette.appendChild(custom);
     paintSwatch();
 
     // Link: toggle the input row; the chip (read state) opens the target.
@@ -502,4 +543,10 @@ export class AnnotationLayer {
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/** Return `v` if it's a #rrggbb hex string, otherwise the fallback. The native
+ *  colour input only accepts that form. */
+function hexOr(v: string | undefined, fallback: string): string {
+  return v && /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
 }

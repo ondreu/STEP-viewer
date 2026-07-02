@@ -207,6 +207,26 @@
   outline-offset: 1px;
 }
 
+/* Custom-colour picker sitting alongside the preset swatches. */
+.step-viewer-annot-palette-custom {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  background: none;
+}
+
+.step-viewer-annot-palette-custom::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.step-viewer-annot-palette-custom::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
 /* Leader arrowhead (points at the anchor). */
 .step-viewer-leader-arrow {
   fill: var(--text-muted);
@@ -371,6 +391,7 @@
 
 /* --- Annotations list panel --- */
 .step-viewer-annots {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-height: 45vh;
@@ -379,6 +400,63 @@
   background-color: var(--background-secondary);
   box-shadow: var(--shadow-s);
   overflow: hidden;
+}
+
+/* --- Measurements section in the annotations list --- */
+.step-viewer-annots-subhead {
+  padding: var(--size-2-2) var(--size-4-2) var(--size-2-1);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.step-viewer-annots-mdot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  background: none;
+  color: var(--text-muted);
+}
+
+.step-viewer-annots-mdot svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* --- Resize grip (structure tree + annotations panels) --- */
+.step-viewer-resize-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  z-index: 2;
+  /* A subtle diagonal-corner glyph drawn with a gradient of two hairlines. */
+  background-image: linear-gradient(
+    135deg,
+    transparent 0 45%,
+    var(--background-modifier-border) 45% 55%,
+    transparent 55% 70%,
+    var(--background-modifier-border) 70% 80%,
+    transparent 80%
+  );
+  opacity: 0.7;
+}
+
+.step-viewer-resize-grip:hover {
+  opacity: 1;
+}
+
+.step-viewer-tree.is-resizing,
+.step-viewer-annots.is-resizing {
+  user-select: none;
 }
 
 .step-viewer-annots-header {
@@ -398,6 +476,8 @@
 }
 
 .step-viewer-annots-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: var(--size-2-1) 0;
 }
@@ -666,6 +746,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+.step-viewer-info-path {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-viewer-info-mat {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  color: var(--text-normal);
+}
+
+.step-viewer-info-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--background-modifier-border);
+}
+
 /* --- Left rail: stacked side panels (tree, annotations) --- */
 .step-viewer-left {
   position: absolute;
@@ -680,6 +782,7 @@
 
 /* --- Structure tree panel --- */
 .step-viewer-tree {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-height: 45vh;
@@ -735,6 +838,8 @@
 }
 
 .step-viewer-tree-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: var(--size-2-1) 0;
 }

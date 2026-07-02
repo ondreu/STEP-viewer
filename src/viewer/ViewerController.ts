@@ -16,6 +16,14 @@ const CLICK_MOVE_THRESHOLD = 5;
 // Fingers wander more than a mouse, so allow a larger slop for touch taps.
 const TOUCH_MOVE_THRESHOLD = 12;
 const ROLL_DURATION = 0.28; // seconds
+// On-screen size factor for measurement / annotation markers: their world
+// radius is set each frame to `distance * MARKER_SCREEN` so they keep a roughly
+// constant size regardless of zoom (features: anchors scale with zoom).
+const MARKER_SCREEN = 0.008;
+
+// Scratch objects reused by the per-frame marker rescale (avoids allocations).
+const _tmpV = new THREE.Vector3();
+const _tmpS = new THREE.Vector3();
 
 /** Details of the part currently under the cursor, for the info panel + tree. */
 export interface PartInfo {
@@ -23,6 +31,15 @@ export interface PartInfo {
   name: string;
   triangles: number;
   size: { x: number; y: number; z: number };
+  /** Assembly path from the model root down to this part (names joined). */
+  path: string;
+  /** Approx. volume (mm³) and surface area (mm²) from the mesh. */
+  volume: number;
+  area: number;
+  /** Surface colour as a #rrggbb string, when the part has a single colour. */
+  color?: string;
+  /** Material name resolved from the STEP metadata (filled in by mountViewer). */
+  material?: string;
 }
 
 /** A measurement number label to render as an HTML overlay at `pos`. */
@@ -113,6 +130,13 @@ export class ViewerController {
   private previewOverlays: THREE.Mesh[] = [];
   private isolated = false;
   private isolateHidden: THREE.Object3D[] = [];
+  /** Fired when isolate turns on (with the kept subtree) or off (null), so the
+   *  annotation/measurement layers can hide anchors outside the isolated part. */
+  onIsolateChange: ((kept: THREE.Object3D | null) => void) | null = null;
+
+  // Markers (measurement + annotation anchor spheres) whose world radius is
+  // rescaled each frame so they keep a constant on-screen size (unit geometry).
+  private scaleMarkers: THREE.Mesh[] = [];
 
   // Meshes eligible for hover/measurement raycasting (edges excluded).
   private pickables: THREE.Mesh[] = [];
@@ -274,6 +298,27 @@ export class ViewerController {
   /** Frame a specific object (used when a structure-tree node is clicked). */
   focusObject(object: THREE.Object3D): void {
     fitCameraToObject(this.camera, this.controls, object);
+  }
+
+  /**
+   * Bounding-box dimension segments (world space) for `object`: the three edges
+   * from its min corner spanning the X, Y and Z extents. Used by "auto-measure"
+   * to add a part's overall L×W×H in one action. Zero-length edges are skipped;
+   * returns null when the object has no geometry.
+   */
+  autoMeasureSegments(object: THREE.Object3D): { a: THREE.Vector3; b: THREE.Vector3 }[] | null {
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return null;
+    const { min, max } = box;
+    const segs: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+    const eps = this.modelDiag * 1e-4;
+    if (max.x - min.x > eps)
+      segs.push({ a: new THREE.Vector3(min.x, min.y, min.z), b: new THREE.Vector3(max.x, min.y, min.z) });
+    if (max.y - min.y > eps)
+      segs.push({ a: new THREE.Vector3(min.x, min.y, min.z), b: new THREE.Vector3(min.x, max.y, min.z) });
+    if (max.z - min.z > eps)
+      segs.push({ a: new THREE.Vector3(min.x, min.y, min.z), b: new THREE.Vector3(min.x, min.y, max.z) });
+    return segs.length ? segs : null;
   }
 
   /** Pan the camera so `worldPoint` is centred, keeping the current zoom. */
@@ -559,10 +604,13 @@ export class ViewerController {
   private applyIsolate(): void {
     for (const o of this.isolateHidden) o.visible = true;
     this.isolateHidden = [];
-    if (!this.isolated || !this.selected || !this.model) return;
+    const active = this.isolated && this.selected ? this.selected : null;
+    // Let the annotation/measurement layers hide anchors outside the kept part.
+    this.onIsolateChange?.(active);
+    if (!active || !this.model) return;
     const keep = new Set<THREE.Object3D>();
-    this.selected.traverse((o) => keep.add(o));
-    let p: THREE.Object3D | null = this.selected;
+    active.traverse((o) => keep.add(o));
+    let p: THREE.Object3D | null = active;
     while (p) {
       keep.add(p);
       p = p.parent;
@@ -601,16 +649,18 @@ export class ViewerController {
    * follows rolls). Returns the object for later removal.
    */
   addAnnotationPin(local: THREE.Vector3): THREE.Object3D {
-    const geom = new THREE.SphereGeometry(this.markerRadius, 16, 12);
+    const geom = new THREE.SphereGeometry(1, 16, 12); // unit; scaled per frame
     const mat = new THREE.MeshBasicMaterial({ color: ANNOT_COLOR });
     const pin = new THREE.Mesh(geom, mat);
     pin.position.copy(local);
     pin.raycast = () => {};
     this.model?.add(pin);
+    this.registerMarker(pin);
     return pin;
   }
 
   removeAnnotationPin(pin: THREE.Object3D): void {
+    this.unregisterMarker(pin as THREE.Mesh);
     pin.parent?.remove(pin);
     const m = pin as THREE.Mesh;
     m.geometry?.dispose?.();
@@ -892,12 +942,28 @@ export class ViewerController {
     const index = mesh.geometry.getIndex();
     const posCount = mesh.geometry.getAttribute("position")?.count ?? 0;
     const triangles = index ? index.count / 3 : posCount / 3;
+    const { volume, area } = volumeAndArea(mesh.geometry);
     return {
       object: mesh,
       name: mesh.name,
       triangles: Math.round(triangles),
       size: { x: size.x, y: size.y, z: size.z },
+      path: this.partPath(mesh),
+      volume,
+      area,
+      color: meshColor(mesh),
     };
+  }
+
+  /** Assembly path (root → part) built from the object's ancestor names. */
+  private partPath(mesh: THREE.Object3D): string {
+    const names: string[] = [];
+    let o: THREE.Object3D | null = mesh;
+    while (o && o !== this.model) {
+      if (o.name && o.name !== "edges") names.unshift(o.name);
+      o = o.parent;
+    }
+    return names.join(" / ");
   }
 
   // --- Measurement ---------------------------------------------------------
@@ -1217,11 +1283,38 @@ export class ViewerController {
   }
 
   private addMarker(p: THREE.Vector3): void {
-    const geom = new THREE.SphereGeometry(this.markerRadius, 16, 12);
+    const geom = new THREE.SphereGeometry(1, 16, 12); // unit; scaled per frame
     const mat = new THREE.MeshBasicMaterial({ color: MEASURE_COLOR });
     const sphere = new THREE.Mesh(geom, mat);
     sphere.position.copy(p);
     this.measureGroup.add(sphere);
+    this.registerMarker(sphere);
+  }
+
+  // --- Scalable markers ----------------------------------------------------
+
+  /** Track a unit-sphere marker so it's rescaled to constant screen size. */
+  private registerMarker(m: THREE.Mesh): void {
+    this.scaleMarkers.push(m);
+    this.rescaleMarker(m); // size it correctly on the frame it appears
+  }
+
+  private unregisterMarker(m: THREE.Mesh): void {
+    const i = this.scaleMarkers.indexOf(m);
+    if (i >= 0) this.scaleMarkers.splice(i, 1);
+  }
+
+  /** Set one marker's scale so its world radius ≈ distance · MARKER_SCREEN. */
+  private rescaleMarker(m: THREE.Mesh): void {
+    m.getWorldPosition(_tmpV);
+    const dist = this.camera.position.distanceTo(_tmpV) || 1;
+    let parentScale = 1;
+    if (m.parent) parentScale = m.parent.getWorldScale(_tmpS).x || 1;
+    m.scale.setScalar((dist * MARKER_SCREEN) / parentScale);
+  }
+
+  private rescaleMarkers(): void {
+    for (const m of this.scaleMarkers) this.rescaleMarker(m);
   }
 
   private drawMeasureLine(a: THREE.Vector3, b: THREE.Vector3): void {
@@ -1310,11 +1403,12 @@ export class ViewerController {
   addPersistentMeasurement(aLocal: THREE.Vector3, bLocal: THREE.Vector3): THREE.Object3D {
     const group = new THREE.Group();
     for (const p of [aLocal, bLocal]) {
-      const geom = new THREE.SphereGeometry(this.markerRadius, 16, 12);
+      const geom = new THREE.SphereGeometry(1, 16, 12); // unit; scaled per frame
       const mat = new THREE.MeshBasicMaterial({ color: MEASURE_COLOR });
       const sphere = new THREE.Mesh(geom, mat);
       sphere.position.copy(p);
       group.add(sphere);
+      this.registerMarker(sphere);
     }
     const lineGeom = new THREE.BufferGeometry().setFromPoints([aLocal, bLocal]);
     const lineMat = new THREE.LineBasicMaterial({ color: MEASURE_COLOR });
@@ -1327,6 +1421,7 @@ export class ViewerController {
   removePersistentMeasurement(group: THREE.Object3D): void {
     group.traverse((o) => {
       const m = o as THREE.Mesh;
+      this.unregisterMarker(m);
       m.geometry?.dispose?.();
       const mat = m.material;
       if (Array.isArray(mat)) mat.forEach((x) => x?.dispose?.());
@@ -1342,6 +1437,7 @@ export class ViewerController {
     this.onMeasureCanKeep?.(false);
     for (const child of [...this.measureGroup.children]) {
       const m = child as THREE.Mesh;
+      this.unregisterMarker(m);
       m.geometry?.dispose?.();
       const mat = m.material;
       if (Array.isArray(mat)) mat.forEach((x) => x?.dispose?.());
@@ -1386,6 +1482,7 @@ export class ViewerController {
       else this.processHover();
     }
     this.rescalePreview();
+    this.rescaleMarkers();
     this.renderer.render(this.scene, this.camera);
     for (const fn of this.frameCallbacks) fn();
   };
@@ -1410,6 +1507,7 @@ export class ViewerController {
     this.clearHighlight();
     this.hovered = null;
     this.clearMeasurement(true);
+    this.scaleMarkers = [];
     this.disposePreview();
     this.sectionCaps?.dispose();
     this.sectionCaps = null;
@@ -1451,6 +1549,49 @@ function num(mm: number): string {
 
 function mid(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
   return a.clone().add(b).multiplyScalar(0.5);
+}
+
+/**
+ * Approximate solid volume and surface area from a triangle mesh: area is the
+ * summed triangle areas; volume is the summed signed tetrahedron volumes (from
+ * the origin), whose absolute value is the enclosed volume for a closed shell.
+ * Both are approximate — the mesh is a tessellation of the true B-rep.
+ */
+function volumeAndArea(geom: THREE.BufferGeometry): { volume: number; area: number } {
+  const pos = geom.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!pos) return { volume: 0, area: 0 };
+  const index = geom.getIndex();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const cross = new THREE.Vector3();
+  let vol = 0;
+  let area = 0;
+  const tri = (i: number, j: number, k: number): void => {
+    a.fromBufferAttribute(pos, i);
+    b.fromBufferAttribute(pos, j);
+    c.fromBufferAttribute(pos, k);
+    vol += a.dot(cross.copy(b).cross(c)) / 6;
+    ab.copy(b).sub(a);
+    ac.copy(c).sub(a);
+    area += cross.copy(ab).cross(ac).length() / 2;
+  };
+  const count = index ? index.count : pos.count;
+  for (let t = 0; t < count; t += 3) {
+    if (index) tri(index.getX(t), index.getX(t + 1), index.getX(t + 2));
+    else tri(t, t + 1, t + 2);
+  }
+  return { volume: Math.abs(vol), area };
+}
+
+/** A part's single surface colour as #rrggbb, or undefined for multi-material. */
+function meshColor(mesh: THREE.Mesh): string | undefined {
+  const mat = mesh.material;
+  if (Array.isArray(mat)) return undefined; // per-face colours; no single value
+  const c = (mat as THREE.MeshStandardMaterial).color;
+  return c ? `#${c.getHexString()}` : undefined;
 }
 
 function easeInOut(t: number): number {

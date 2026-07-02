@@ -1,5 +1,7 @@
 import { setIcon, setTooltip } from "obsidian";
 import { AnnotationLayer, ANNOT_CATEGORIES } from "./AnnotationLayer";
+import { MeasurementLayer } from "./MeasurementLayer";
+import { makeResizable } from "./resizable";
 
 export interface AnnotationsPanelHandle {
   el: HTMLElement;
@@ -7,13 +9,15 @@ export interface AnnotationsPanelHandle {
 }
 
 /**
- * Side panel listing all annotations (text + the part each is attached to),
- * with a show/hide toggle and an opacity slider for the annotations in the 3D
- * view. Clicking a row pans the camera to that note; each row can be deleted.
+ * Side panel listing all annotations (text + the part each is attached to) and
+ * all pinned measurements, with a show/hide toggle and an opacity slider for the
+ * annotations in the 3D view. Clicking a row pans the camera to that note /
+ * measurement; each row can be deleted.
  */
 export function createAnnotationsPanel(
   host: HTMLElement,
   layer: AnnotationLayer,
+  measurements: MeasurementLayer,
 ): AnnotationsPanelHandle {
   const panel = host.createDiv({ cls: "step-viewer-annots" });
 
@@ -76,15 +80,19 @@ export function createAnnotationsPanel(
     body.empty();
     const filter = layer.getFilter();
     const items = layer.getItems().filter((i) => !filter || i.color === filter);
-    if (items.length === 0) {
+    // Measurements have no category, so they only show under the "All" filter.
+    const measures = filter ? [] : measurements.getItems();
+
+    if (items.length === 0 && measures.length === 0) {
       body.createDiv({
         cls: "step-viewer-annots-empty",
         text: filter
           ? "No annotations in this category."
-          : "No annotations yet. Use annotate mode to add one.",
+          : "Nothing yet. Use annotate mode to add a note, or measure to pin one.",
       });
       return;
     }
+
     for (const item of items) {
       const row = body.createDiv({ cls: "step-viewer-annots-row" });
       const dot = row.createSpan({ cls: "step-viewer-annots-dot" });
@@ -110,7 +118,34 @@ export function createAnnotationsPanel(
         layer.removeById(item.id);
       });
     }
+
+    if (measures.length > 0) {
+      body.createDiv({
+        cls: "step-viewer-annots-subhead",
+        text: `Measurements (${measures.length})`,
+      });
+      for (const m of measures) {
+        const row = body.createDiv({ cls: "step-viewer-annots-row" });
+        const dot = row.createSpan({ cls: "step-viewer-annots-dot step-viewer-annots-mdot" });
+        setIcon(dot, "ruler");
+        const main = row.createDiv({ cls: "step-viewer-annots-main" });
+        main.createDiv({ cls: "step-viewer-annots-text", text: m.text });
+        main.addEventListener("click", () => measurements.focus(m.id));
+
+        const del = row.createEl("button", {
+          cls: "step-viewer-btn clickable-icon step-viewer-annots-del",
+        });
+        setIcon(del, "trash-2");
+        setTooltip(del, "Delete measurement");
+        del.addEventListener("click", (e) => {
+          e.stopPropagation();
+          measurements.removeById(m.id);
+        });
+      }
+    }
   }
+
+  makeResizable(panel);
 
   render();
   return { el: panel, render };

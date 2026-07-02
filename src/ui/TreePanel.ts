@@ -2,6 +2,7 @@ import { setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { StepTreeNode } from "../viewer/StepToThree";
 import { ViewerController } from "../viewer/ViewerController";
+import { makeResizable } from "./resizable";
 
 export interface TreePanelHandle {
   el: HTMLElement;
@@ -9,13 +10,21 @@ export interface TreePanelHandle {
   reveal(object: THREE.Object3D | null): void;
 }
 
+export interface TreePanelOptions {
+  /** Auto-measure the selected part's bounding box (brainstorm: en-masse). */
+  onAutoMeasure?: () => void;
+}
+
 interface RowEntry {
   node: StepTreeNode;
   row: HTMLElement;
   childWrap: HTMLElement | null;
   checkbox: HTMLInputElement;
+  depth: number;
+  hasChildren: boolean;
   expandAncestors: () => void;
   setExpanded: (open: boolean) => void;
+  isExpanded: () => boolean;
 }
 
 /**
@@ -30,6 +39,7 @@ export function createTreePanel(
   host: HTMLElement,
   tree: StepTreeNode,
   controller: ViewerController,
+  opts: TreePanelOptions = {},
 ): TreePanelHandle {
   const panel = host.createDiv({ cls: "step-viewer-tree" });
 
@@ -41,12 +51,30 @@ export function createTreePanel(
   const rows = new Map<THREE.Object3D, RowEntry>();
   const entries: RowEntry[] = [];
 
-  const expandAllBtn = headerButton(actions, "chevrons-up-down", "Expand all", () => {
-    for (const e of entries) e.setExpanded(true);
+  // Expand / collapse a single level across the whole tree per click (rather
+  // than everything at once): expand opens the shallowest still-collapsed
+  // level; collapse closes the deepest currently-open level.
+  headerButton(actions, "chevrons-up-down", "Expand one level", () => {
+    const depths = entries
+      .filter((e) => e.hasChildren && !e.isExpanded())
+      .map((e) => e.depth);
+    if (!depths.length) return;
+    const d = Math.min(...depths);
+    for (const e of entries) if (e.hasChildren && e.depth === d) e.setExpanded(true);
   });
-  const collapseAllBtn = headerButton(actions, "chevrons-down-up", "Collapse all", () => {
-    for (const e of entries) e.setExpanded(false);
+  headerButton(actions, "chevrons-down-up", "Collapse one level", () => {
+    const depths = entries
+      .filter((e) => e.hasChildren && e.isExpanded())
+      .map((e) => e.depth);
+    if (!depths.length) return;
+    const d = Math.max(...depths);
+    for (const e of entries) if (e.hasChildren && e.depth === d) e.setExpanded(false);
   });
+  if (opts.onAutoMeasure) {
+    headerButton(actions, "ruler", "Measure selected part's bounding box", () =>
+      opts.onAutoMeasure?.(),
+    );
+  }
   let allVisible = true;
   const eyeBtn = headerButton(actions, "eye", "Hide all parts", () => {
     allVisible = !allVisible;
@@ -62,8 +90,6 @@ export function createTreePanel(
     const on = controller.toggleIsolate();
     isolateBtn.toggleClass("is-active", on);
   });
-  void expandAllBtn;
-  void collapseAllBtn;
 
   // Name filter.
   const filter = panel.createEl("input", {
@@ -80,6 +106,8 @@ export function createTreePanel(
   setTooltip(count, `${leafCount} part${leafCount === 1 ? "" : "s"}`);
 
   filter.addEventListener("input", () => applyFilter(tree, rows, filter.value.trim().toLowerCase()));
+
+  makeResizable(panel);
 
   let current: HTMLElement | null = null;
 
@@ -174,6 +202,7 @@ function renderNode(
     childWrap.toggle(open);
   };
   const expandSelf = () => setExpanded(true);
+  const isExpanded = () => hasChildren && !caret.hasClass("is-collapsed");
 
   if (hasChildren) {
     setIcon(caret, "chevron-down");
@@ -210,8 +239,11 @@ function renderNode(
     row,
     childWrap: null,
     checkbox: cb,
+    depth,
+    hasChildren,
     expandAncestors: () => ancestorExpanders.forEach((fn) => fn()),
     setExpanded,
+    isExpanded,
   };
   rows.set(node.object, entry);
   entries.push(entry);

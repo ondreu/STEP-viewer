@@ -3,6 +3,8 @@ import * as THREE from "three";
 export interface LabelHandle {
   el: HTMLElement;
   remove(): void;
+  /** Set the opacity of the label and its leader line/arrow together. */
+  setOpacity(o: number): void;
 }
 
 /**
@@ -81,6 +83,11 @@ export class LabelLayer {
         if (i >= 0) this.items.splice(i, 1);
         el.remove();
         item.line?.remove();
+      },
+      // `opacity` (not stroke-opacity) fades the arrowhead marker with the line.
+      setOpacity: (o: number) => {
+        el.style.opacity = String(o);
+        if (item.line) item.line.style.opacity = String(o);
       },
     };
   }

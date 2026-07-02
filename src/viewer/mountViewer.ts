@@ -14,6 +14,8 @@ import { AnnotationStore } from "../annotations/AnnotationStore";
 import { MeasurementLayer } from "../ui/MeasurementLayer";
 import { MeasurementStore } from "../annotations/MeasurementStore";
 import { createSectionControl, createExplodeControl } from "../ui/ViewControls";
+import { parseStepMeta } from "./StepMeta";
+import { PartInfo } from "./ViewerController";
 
 export interface MountOptions {
   plugin: Plugin;
@@ -25,6 +27,8 @@ export interface MountOptions {
   initialView?: string;
   /** Initial roll about the view axis, in 90° quarter turns. */
   initialRoll?: number;
+  /** Raw STEP file text, used to extract material/metadata for the info card. */
+  stepText?: string;
 }
 
 export interface ViewerHandle {
@@ -98,16 +102,24 @@ export function mountViewer(
   const leftRail = host.createDiv({ cls: "step-viewer-left" });
 
   // Structure-tree panel, hidden until toggled.
-  const treePanel = createTreePanel(leftRail, tree, controller);
+  const treePanel = createTreePanel(leftRail, tree, controller, {
+    onAutoMeasure: () => autoMeasure(),
+  });
   treePanel.el.toggle(false);
 
   // Part-info panel (bottom-right). Hover only updates the info + transient
   // highlight; clicking a part selects it and reveals it in the tree (so the
   // tree doesn't jump around as the cursor moves over the model).
   const info = new PartInfoPanel(host);
-  controller.onHover = (part) => info.update(part);
+  const meta = parseStepMeta(opts.stepText ?? "");
+  // Fill in the material (from STEP metadata) before showing the info card.
+  const enrich = (part: PartInfo | null): PartInfo | null => {
+    if (part) part.material = meta.materialFor(part.name);
+    return part;
+  };
+  controller.onHover = (part) => info.update(enrich(part));
   controller.onSelectPart = (part) => {
-    info.update(part);
+    info.update(enrich(part));
     treePanel.reveal(part?.object ?? null);
   };
 
@@ -121,13 +133,6 @@ export function mountViewer(
   );
   controller.onAnnotate = ({ local, part }) => annotations.addAt(local, part);
 
-  // Annotations list panel (hidden until toggled), kept in sync with the layer.
-  const annotsPanel = createAnnotationsPanel(leftRail, annotations);
-  annotsPanel.el.toggle(false);
-  annotations.onChange = () => annotsPanel.render();
-  void annotations.load();
-  if (opts.showAnnotations === false) annotations.setVisible(false);
-
   // Pinned (persistent) measurements — parented to the model, persisted per file.
   const measurements = new MeasurementLayer(
     controller,
@@ -135,7 +140,37 @@ export function mountViewer(
     new MeasurementStore(opts.plugin),
     opts.filePath,
   );
+
+  // Annotations list panel (hidden until toggled), lists notes + measurements.
+  const annotsPanel = createAnnotationsPanel(leftRail, annotations, measurements);
+  annotsPanel.el.toggle(false);
+  annotations.onChange = () => annotsPanel.render();
+  measurements.onChange = () => annotsPanel.render();
+  void annotations.load();
   void measurements.load();
+  if (opts.showAnnotations === false) annotations.setVisible(false);
+
+  // Isolating a part also hides annotations & measurements outside it.
+  controller.onIsolateChange = (kept) => {
+    annotations.setIsolate(kept);
+    measurements.setIsolate(kept);
+  };
+
+  // Auto-measure: add the selected part's bounding-box dimensions (or the whole
+  // model's, when nothing is selected) as pinned measurements in one action.
+  function autoMeasure(): void {
+    const target = controller.getSelected() ?? controller.getModel();
+    if (!target) return;
+    const segs = controller.autoMeasureSegments(target);
+    if (!segs) {
+      new Notice("Nothing to measure on that part.");
+      return;
+    }
+    for (const s of segs) {
+      measurements.add(controller.worldToLocal(s.a), controller.worldToLocal(s.b));
+    }
+    if (!annotsPanel.el.isShown()) new Notice(`Added ${segs.length} measurements.`);
+  }
 
   // "Pin" the current A–B measurement: convert its world points to model-local
   // coordinates so the persistent copy follows rolls, then clear the transient.

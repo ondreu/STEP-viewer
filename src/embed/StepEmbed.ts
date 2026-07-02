@@ -108,8 +108,9 @@ export class StepEmbed extends MarkdownRenderChild {
       loading.createEl("div", { text: "Loading STEP…", cls: "step-viewer-message" });
 
       const buffer = await this.plugin.app.vault.readBinary(file);
+      const bytes = new Uint8Array(buffer);
       const occt = await OcctLoader.get();
-      const result = occt.ReadStepFile(new Uint8Array(buffer), DEFAULT_PARAMS);
+      const result = occt.ReadStepFile(bytes, DEFAULT_PARAMS);
       if (!result || !result.success) throw new Error("Could not parse STEP file.");
 
       // Scrolled away (or unloaded) while we were parsing — bail out.
@@ -129,6 +130,7 @@ export class StepEmbed extends MarkdownRenderChild {
         showAnnotations: this.opts.showAnnotations,
         initialView: this.opts.view,
         initialRoll: this.opts.roll,
+        stepText: new TextDecoder("latin1").decode(bytes),
       });
     } catch (err) {
       console.error("[STEP Viewer] Embed failed", this.linktext, err);

@@ -7,6 +7,11 @@ import { hasRenderableMeshes } from "../viewer/StepToThree";
 
 export const STEP_VIEW_TYPE = "step-viewer-view";
 
+/** Decode STEP bytes to text for metadata extraction (STEP is ASCII/Latin-1). */
+function decodeStep(bytes: Uint8Array): string {
+  return new TextDecoder("latin1").decode(bytes);
+}
+
 /**
  * Read-only, file-driven view for STEP models (design doc §5.2).
  *
@@ -92,6 +97,7 @@ export class StepView extends FileView {
       this.viewer = mountViewer(host, result, {
         plugin: this.plugin,
         filePath: file.path,
+        stepText: decodeStep(bytes),
       });
     } catch (err) {
       if (token !== this.loadToken) return;

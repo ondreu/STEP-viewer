@@ -7,6 +7,16 @@ interface Live {
   data: StoredMeasurement;
   graphic: THREE.Object3D;
   label: LabelHandle;
+  /** Endpoints (model-local) + cached readout, for the list panel & isolate. */
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  text: string;
+}
+
+/** Row data for the measurements section of the annotations list panel. */
+export interface MeasurementItem {
+  id: string;
+  text: string;
 }
 
 /**
@@ -18,6 +28,12 @@ interface Live {
 export class MeasurementLayer {
   private items: Live[] = [];
   private saveTimer: number | null = null;
+  private visible = true;
+  // When isolate is active, only measurements with an endpoint inside this world
+  // box (the isolated part's bounds) are shown; null = no isolate restriction.
+  private isolateBox: THREE.Box3 | null = null;
+  /** Fired when measurements are added/removed (drives the list panel). */
+  onChange: (() => void) | null = null;
 
   constructor(
     private controller: ViewerController,
@@ -29,6 +45,7 @@ export class MeasurementLayer {
   async load(): Promise<void> {
     const list = await this.store.get(this.path);
     for (const d of list) this.spawn(d);
+    this.onChange?.();
   }
 
   /** Pin the given endpoints (model-local coordinates) as a new measurement. */
@@ -44,6 +61,63 @@ export class MeasurementLayer {
     };
     this.spawn(d);
     this.scheduleSave();
+    this.onChange?.();
+  }
+
+  // --- List panel API ------------------------------------------------------
+
+  getItems(): MeasurementItem[] {
+    return this.items.map((i) => ({ id: i.data.id, text: i.text }));
+  }
+
+  /** Pan the camera to a measurement's midpoint and flash its label. */
+  focus(id: string): void {
+    const live = this.items.find((i) => i.data.id === id);
+    if (!live) return;
+    const mid = live.a.clone().add(live.b).multiplyScalar(0.5);
+    this.controller.lookAtPoint(this.controller.localToWorld(mid));
+    live.label.el.addClass("is-flash");
+    window.setTimeout(() => live.label.el.removeClass("is-flash"), 900);
+  }
+
+  removeById(id: string): void {
+    const live = this.items.find((i) => i.data.id === id);
+    if (live) this.remove(live);
+  }
+
+  setVisible(v: boolean): void {
+    this.visible = v;
+    for (const live of this.items) this.applyVisual(live);
+  }
+
+  isVisible(): boolean {
+    return this.visible;
+  }
+
+  /** Restrict visible measurements to those touching `kept` (isolate). */
+  setIsolate(kept: THREE.Object3D | null): void {
+    if (!kept) {
+      this.isolateBox = null;
+    } else {
+      const box = new THREE.Box3().setFromObject(kept);
+      const pad = box.getSize(new THREE.Vector3()).length() * 0.01 || 1e-4;
+      box.expandByScalar(pad);
+      this.isolateBox = box;
+    }
+    for (const live of this.items) this.applyVisual(live);
+  }
+
+  private matchesIsolate(live: Live): boolean {
+    if (!this.isolateBox) return true;
+    const aw = this.controller.localToWorld(live.a);
+    const bw = this.controller.localToWorld(live.b);
+    return this.isolateBox.containsPoint(aw) || this.isolateBox.containsPoint(bw);
+  }
+
+  private applyVisual(live: Live): void {
+    const shown = this.visible && this.matchesIsolate(live);
+    live.graphic.visible = shown;
+    live.label.el.toggleClass("is-hidden", !shown);
   }
 
   private spawn(d: StoredMeasurement): Live {
@@ -74,7 +148,7 @@ export class MeasurementLayer {
       null,
       () => distText,
     );
-    const live: Live = { data: d, graphic, label };
+    const live: Live = { data: d, graphic, label, a, b, text: distText };
 
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
     del.addEventListener("click", (e) => {
@@ -83,6 +157,7 @@ export class MeasurementLayer {
     });
 
     this.items.push(live);
+    this.applyVisual(live);
     return live;
   }
 
@@ -92,6 +167,7 @@ export class MeasurementLayer {
     const i = this.items.indexOf(live);
     if (i >= 0) this.items.splice(i, 1);
     this.scheduleSave();
+    this.onChange?.();
   }
 
   private scheduleSave(): void {
