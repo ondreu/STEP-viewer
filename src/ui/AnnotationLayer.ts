@@ -4,9 +4,11 @@ import { ViewerController } from "../viewer/ViewerController";
 import { LabelLayer, LabelHandle } from "./LabelLayer";
 import { AnnotationStore, StoredAnnotation } from "../annotations/AnnotationStore";
 
-// Default leader offset (screen px) applied the first time a note is switched
-// to leader mode — placed up and to the right of the anchor.
-const DEFAULT_LEADER_OFFSET = { x: 72, y: -56 };
+// Default leader offset (screen px) applied the first time a note is pulled out
+// to the side — placed clearly up and to the right of the anchor.
+const DEFAULT_LEADER_OFFSET = { x: 140, y: -96 };
+// Pointer travel (px) before a press on a note becomes a drag rather than a click.
+const DRAG_THRESHOLD = 4;
 
 /** Category colours a note can be tagged with (cycled from the swatch button). */
 export const ANNOT_CATEGORIES: { color: string; label: string }[] = [
@@ -297,11 +299,14 @@ export class AnnotationLayer {
     });
     hoverBtn.toggleClass("is-active", !!d.hoverOnly);
 
-    const leaderBtn = this.toolButton(tools, "milestone", "Place off to the side (leader)", () => {
+    // Leader = pull the note off to the side with an arrow. Toggling on pulls it
+    // out to the default offset; toggling off snaps it back onto the anchor.
+    // (You can also just drag the note anywhere — that pulls it out too.)
+    const leaderBtn = this.toolButton(tools, "milestone", "Pull note out to the side (or drag it)", () => {
       d.leader = !d.leader;
-      if (d.leader && d.ox == null && d.oy == null) {
-        d.ox = DEFAULT_LEADER_OFFSET.x;
-        d.oy = DEFAULT_LEADER_OFFSET.y;
+      if (d.leader) {
+        d.ox = d.ox ?? DEFAULT_LEADER_OFFSET.x;
+        d.oy = d.oy ?? DEFAULT_LEADER_OFFSET.y;
       }
       leaderBtn.toggleClass("is-active", !!d.leader);
       this.applyModes(live);
@@ -341,6 +346,11 @@ export class AnnotationLayer {
       renderEl.hide();
     }
     renderEl.addEventListener("click", (e) => {
+      // A click that concluded a drag (pull-out) must not also enter edit mode.
+      if (el.dataset.dragged) {
+        delete el.dataset.dragged;
+        return;
+      }
       const a = (e.target as HTMLElement).closest("a");
       if (a) {
         e.preventDefault();
@@ -363,7 +373,7 @@ export class AnnotationLayer {
       this.remove(live);
     });
 
-    this.wireDrag(el, textEl, d);
+    this.wireDrag(el, textEl, live);
 
     this.items.push(live);
     this.applyVisual(live);
@@ -395,38 +405,57 @@ export class AnnotationLayer {
 
   /**
    * Pointer handling for a note. Always swallows canvas gestures (so editing
-   * doesn't orbit the model); in leader mode, dragging the note (not the text or
-   * buttons) moves it and stores the new offset.
+   * doesn't orbit the model). Dragging the note body (not the text, buttons,
+   * link or input) pulls it off to the side: past a small threshold it turns on
+   * leader mode automatically and follows the cursor, drawing the arrow back to
+   * its anchor. A press that doesn't move stays a click (edit / open link).
    */
-  private wireDrag(el: HTMLElement, textEl: HTMLElement, d: StoredAnnotation): void {
-    let drag: { x: number; y: number; ox: number; oy: number } | null = null;
+  private wireDrag(el: HTMLElement, textEl: HTMLElement, live: Live): void {
+    const d = live.data;
+    let press: { x: number; y: number; ox: number; oy: number } | null = null;
+    let moved = false;
 
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation(); // never reaches the canvas (orbit / new annotation)
-      if (!d.leader) return;
+      delete el.dataset.dragged;
       const target = e.target as HTMLElement;
       if (target === textEl || textEl.contains(target)) return; // allow editing
       if (target.closest("button") || target.closest("input") || target.closest("a")) return;
-      drag = {
+      press = {
         x: e.clientX,
         y: e.clientY,
-        ox: d.ox ?? DEFAULT_LEADER_OFFSET.x,
-        oy: d.oy ?? DEFAULT_LEADER_OFFSET.y,
+        ox: d.leader ? d.ox ?? DEFAULT_LEADER_OFFSET.x : 0,
+        oy: d.leader ? d.oy ?? DEFAULT_LEADER_OFFSET.y : 0,
       };
+      moved = false;
       el.setPointerCapture(e.pointerId);
-      el.addClass("is-dragging");
     });
     el.addEventListener("pointermove", (e) => {
-      if (!drag) return;
-      d.ox = drag.ox + (e.clientX - drag.x);
-      d.oy = drag.oy + (e.clientY - drag.y);
+      if (!press) return;
+      const dx = e.clientX - press.x;
+      const dy = e.clientY - press.y;
+      if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (!moved) {
+        moved = true;
+        el.addClass("is-dragging");
+        if (!d.leader) {
+          d.leader = true; // dragging the note pulls it out with an arrow
+          this.applyModes(live);
+        }
+      }
+      d.ox = press.ox + dx;
+      d.oy = press.oy + dy;
     });
     const end = (e: PointerEvent): void => {
-      if (!drag) return;
-      drag = null;
-      el.removeClass("is-dragging");
+      if (!press) return;
       el.releasePointerCapture?.(e.pointerId);
-      this.scheduleSave();
+      if (moved) {
+        el.removeClass("is-dragging");
+        el.dataset.dragged = "1"; // suppress the click that follows a drag
+        this.scheduleSave();
+        this.onChange?.();
+      }
+      press = null;
     };
     el.addEventListener("pointerup", end);
     el.addEventListener("pointercancel", end);

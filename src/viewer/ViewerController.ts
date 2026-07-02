@@ -87,6 +87,8 @@ export class ViewerController {
   private raf = 0;
   private model: THREE.Group | null = null;
   private modelDiag = 1;
+  private modelBasePos = new THREE.Vector3();
+  private modelBaseQuat = new THREE.Quaternion();
   private disposed = false;
 
   private wireframe = false;
@@ -127,6 +129,8 @@ export class ViewerController {
   private dragging = false;
   /** Called with the hovered part, or null when nothing is under the cursor. */
   onHover: ((info: PartInfo | null) => void) | null = null;
+  /** Called when a part is clicked (selected), or null when clicking empty space. */
+  onSelectPart: ((info: PartInfo | null) => void) | null = null;
 
   /** Called each frame after rendering (drives the view cube + label overlays). */
   private frameCallbacks: Array<() => void> = [];
@@ -226,6 +230,8 @@ export class ViewerController {
       this.disposeGroup(this.model);
     }
     this.model = group;
+    this.modelBasePos.copy(group.position);
+    this.modelBaseQuat.copy(group.quaternion);
 
     this.pickables = [];
     group.traverse((o) => {
@@ -676,6 +682,19 @@ export class ViewerController {
     if (this.sectionEnabled) this.updateSectionPlane(); // re-sync world-space cut
   }
 
+  /** Undo any rolls: restore the model's orientation to how it loaded. Used when
+   *  snapping to a standard view so the view cube ends up axis-aligned (upright). */
+  resetModelOrientation(): void {
+    if (!this.model) return;
+    this.roll.active = false;
+    this.model.position.copy(this.modelBasePos);
+    this.model.quaternion.copy(this.modelBaseQuat);
+    this.setHover(null);
+    this.clearMeasurement();
+    this.setPreview(null, false);
+    if (this.sectionEnabled) this.updateSectionPlane();
+  }
+
   private advanceRoll(dt: number): void {
     if (!this.roll.active || !this.model) return;
     this.roll.t = Math.min(this.roll.t + dt / ROLL_DURATION, 1);
@@ -898,20 +917,23 @@ export class ViewerController {
     if (moved > threshold) return; // it was an orbit drag, not a tap
     if (this.measureEnabled) this.pickMeasurePoint(e);
     else if (this.annotateEnabled) this.pickAnnotate(e);
-    // Touch has no hover, so a plain tap inspects the part under the finger
-    // (drives the same part-info panel the mouse shows on hover).
-    else if (e.pointerType === "touch") this.pickInspect(e);
+    // Otherwise a plain click selects the part under the cursor: the highlight
+    // sticks (persistent selection) and the structure tree reveals it. Hover
+    // (mouse-over) only shows the transient highlight — it never selects.
+    else this.pickSelect(e);
   };
 
-  private pickInspect(e: PointerEvent): void {
+  private pickSelect(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.pickables, false);
-    this.setHover((hits[0]?.object as THREE.Mesh) ?? null);
+    const hit = this.raycaster.intersectObjects(this.pickables, false)[0];
+    const mesh = (hit?.object as THREE.Mesh) ?? null;
+    this.setSelected(mesh);
+    this.onSelectPart?.(mesh ? this.describePart(mesh) : null);
   }
 
   private pickAnnotate(e: PointerEvent): void {

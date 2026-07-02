@@ -37,68 +37,64 @@ export function createToolbar(
   controller: ViewerController,
   opts: ToolbarOptions,
 ): HTMLElement {
-  const bar = host.createDiv({ cls: "step-viewer-toolbar" });
   let treeOpen = opts.treeInitiallyOpen;
   let annotsOpen = opts.annotationsInitiallyOpen;
   let sectionOpen = false;
   let explodeOpen = false;
 
-  // Group 1 — camera framing.
-  iconButton(bar, "maximize", "Reset / fit camera", () => controller.resetCamera());
-  separator(bar);
+  // Each logical group is its own card, so the split reads clearly.
+  const g1 = card(host);
+  iconButton(g1, "maximize", "Reset / fit camera", () => controller.resetCamera());
 
-  // Group 2 — appearance.
-  const wire = iconButton(bar, "grid", "Toggle wireframe", () => {
+  const g2 = card(host);
+  const wire = iconButton(g2, "grid", "Toggle wireframe", () => {
     controller.toggleWireframe();
     sync();
   });
-  const edge = iconButton(bar, "box", "Toggle edges", () => {
+  const edge = iconButton(g2, "box", "Toggle edges", () => {
     controller.toggleEdges();
     sync();
   });
-  const transp = iconButton(bar, "blend", "Toggle transparency", () => {
+  const transp = iconButton(g2, "blend", "Toggle transparency", () => {
     controller.toggleTransparency();
     sync();
   });
-  const proj = iconButton(bar, "box-select", "Perspective / orthographic", () => {
+  const proj = iconButton(g2, "box-select", "Perspective / orthographic", () => {
     controller.toggleProjection();
     sync();
   });
-  separator(bar);
 
-  // Group 3 — inspect (cutaways).
-  const section = iconButton(bar, "scissors", "Section plane", () => {
+  const g3 = card(host);
+  const section = iconButton(g3, "scissors", "Section plane", () => {
     sectionOpen = opts.onToggleSection();
     sync();
   });
-  const explode = iconButton(bar, "move-3d", "Explode view", () => {
+  const explode = iconButton(g3, "move-3d", "Explode view", () => {
     explodeOpen = opts.onToggleExplode();
     sync();
   });
-  separator(bar);
 
-  // Group 4 — measure & annotate.
-  const measure = iconButton(bar, "ruler", "Measure (choose a type below)", () => {
+  const g4 = card(host);
+  const measure = iconButton(g4, "ruler", "Measure (choose a type below)", () => {
     controller.toggleMeasure();
     sync();
   });
-  const snap = iconButton(bar, "magnet", "Snap measurement & annotations to corners / edges", () => {
+  const snap = iconButton(g4, "magnet", "Snap measurement & annotations to corners / edges", () => {
     controller.toggleSnap();
     sync();
   });
-  const annotate = iconButton(bar, "sticky-note", "Annotate: click a point to pin a note", () => {
+  const annotate = iconButton(g4, "sticky-note", "Annotate: click a point to pin a note", () => {
     controller.toggleAnnotate();
     sync();
   });
-  separator(bar);
 
-  // Group 5 — output + panels.
-  iconButton(bar, "camera", "Screenshot to PNG", () => opts.onScreenshot());
-  const annots = iconButton(bar, "messages-square", "Toggle annotations list", () => {
+  const g5 = card(host);
+  iconButton(g5, "camera", "Screenshot to PNG", () => opts.onScreenshot());
+  const annots = iconButton(g5, "messages-square", "Toggle annotations list", () => {
     annotsOpen = opts.onToggleAnnotations();
     sync();
   });
-  const tree = iconButton(bar, "list-tree", "Toggle structure tree", () => {
+  const tree = iconButton(g5, "list-tree", "Toggle structure tree", () => {
     treeOpen = opts.onToggleTree();
     sync();
   });
@@ -143,12 +139,12 @@ export function createToolbar(
   }
   sync();
 
-  return bar;
+  return g1;
 }
 
-/** A thin divider between toolbar groups. */
-function separator(parent: HTMLElement): void {
-  parent.createDiv({ cls: "step-viewer-toolbar-sep" });
+/** A toolbar group rendered as its own card in the rail. */
+function card(host: HTMLElement): HTMLElement {
+  return host.createDiv({ cls: "step-viewer-toolbar" });
 }
 
 /** Shared icon-button factory (also used for the roll arrows). */

@@ -79,8 +79,9 @@ Download `main.js`, `manifest.json` and `styles.css` from the
   each note and the part it's attached to, with show/hide and opacity controls.
   Each note has per-note controls:
   - **Hover-only** — collapse the note to a dot and reveal the text on hover.
-  - **Leader** — place the note off to the side with a dashed leader line and
-    arrowhead pointing back to its anchor; drag the note to reposition it.
+  - **Leader** — **drag a note off the model** (or use the leader button) to
+    pull it out to the side; a dashed line with an arrowhead points back to its
+    anchor. Drag again to reposition; the leader button snaps it back.
   - **Category colour** — a swatch opens a palette (Note / Issue / OK / Info);
     the list panel can filter by category.
   - **Markdown** — note text renders as Markdown in read state (click to edit).
@@ -115,13 +116,16 @@ below the navigation cube) provides:
 | Annotations | Open the annotations list panel |
 | Structure | Open the assembly structure tree |
 
-The buttons are grouped (framing · appearance · inspect · measure/annotate ·
-output/panels) with thin dividers. The ↶ / ↷ arrows below the cube roll the view
-90°.
+The buttons are split into separate cards by group (framing · appearance ·
+inspect · measure/annotate · output/panels). The ↶ / ↷ arrows below the cube
+roll the view; clicking a **cube face** first undoes any roll so the view snaps
+to a clean, upright standard view.
 
-In the **structure tree**, hover a row to highlight that part in 3D, click it to
-select and frame it, and use the header controls to expand/collapse all, toggle
-all visibility, filter by name, or **isolate** the selected part (hide the rest).
+Hovering a part in the model highlights it; **clicking** a part selects it (the
+highlight sticks) and reveals it in the structure tree — hovering never scrolls
+the tree. In the **structure tree**, hover a row to highlight that part in 3D,
+click it to select and frame it, and use the header controls to expand/collapse
+all, toggle all visibility, filter by name, or **isolate** the selection.
 
 ### Embedding a model in a note
 

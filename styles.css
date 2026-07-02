@@ -58,14 +58,6 @@
   box-shadow: var(--shadow-s);
 }
 
-/* Divider between toolbar groups. */
-.step-viewer-toolbar-sep {
-  align-self: center;
-  width: 60%;
-  height: 1px;
-  margin: var(--size-2-1) 0;
-  background-color: var(--background-modifier-border);
-}
 
 .step-viewer-btn {
   display: flex;

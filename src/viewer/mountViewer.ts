@@ -101,9 +101,12 @@ export function mountViewer(
   const treePanel = createTreePanel(leftRail, tree, controller);
   treePanel.el.toggle(false);
 
-  // Part-info panel (bottom-right), driven by hover; also syncs the tree.
+  // Part-info panel (bottom-right). Hover only updates the info + transient
+  // highlight; clicking a part selects it and reveals it in the tree (so the
+  // tree doesn't jump around as the cursor moves over the model).
   const info = new PartInfoPanel(host);
-  controller.onHover = (part) => {
+  controller.onHover = (part) => info.update(part);
+  controller.onSelectPart = (part) => {
     info.update(part);
     treePanel.reveal(part?.object ?? null);
   };
@@ -162,10 +165,13 @@ export function mountViewer(
       const up = cam.up.clone().applyQuaternion(inv);
       return { dir, up };
     },
-    // The clicked face is a model-frame direction; rotate it back to world space
-    // before snapping the camera.
-    onSelect: (dir) =>
-      controller.setViewDirection(dir.clone().applyQuaternion(controller.getModelQuaternion())),
+    // Snapping to a standard view: undo any rolls first so the result is
+    // axis-aligned and upright (the cube isn't left crooked), then look along
+    // the clicked face direction (model-local == world after the reset).
+    onSelect: (dir) => {
+      controller.resetModelOrientation();
+      controller.setViewDirection(dir.clone());
+    },
   });
 
   const roll = rail.createDiv({ cls: "step-viewer-roll" });
