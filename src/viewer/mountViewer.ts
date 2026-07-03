@@ -2,7 +2,7 @@ import { Notice, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { OcctResult } from "../types";
 import { stepToThree, StepModel, detectUntessellatedMeshes } from "./StepToThree";
-import { healFrameLikeMeshes } from "./HealFaces";
+import { healMissingFaces } from "./HealFaces";
 import { ViewerController } from "./ViewerController";
 import { createToolbar, iconButton } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
@@ -77,10 +77,11 @@ export function mountModel(
   const { group, tree } = model;
 
   // Reconstruct planar faces the STEP reader failed to tessellate, so parts
-  // that would render as hollow "frames" become solid. Only ever touches those
-  // already-broken meshes. Can be turned off in settings.
+  // that would render as hollow "frames" (or solids missing a couple of faces)
+  // become solid. Only ever touches meshes with open planar boundaries; fully
+  // tessellated (watertight) meshes are left alone. Can be turned off in settings.
   if (opts.healFaces !== false) {
-    const healed = healFrameLikeMeshes(group);
+    const healed = healMissingFaces(group);
     if (healed.length > 0) {
       console.info(
         `[STEP Viewer] reconstructed ${healed.length} untessellated ` +

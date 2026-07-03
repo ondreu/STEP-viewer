@@ -20,29 +20,13 @@ import { MESH_TAG, EDGES_TAG } from "./StepToThree";
 const EDGE_THRESHOLD_ANGLE = 30;
 const EDGE_COLOR = 0x222222;
 
-/** A frame-like mesh: triangulated area far below its bounding-box face. */
-function isFrameLike(geom: THREE.BufferGeometry): boolean {
-  const pos = geom.getAttribute("position");
-  const idx = geom.getIndex();
-  if (!pos || !idx || idx.count < 3) return false;
-
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
-  const ab = new THREE.Vector3(), ac = new THREE.Vector3();
-  let area = 0;
-  for (let t = 0; t < idx.count; t += 3) {
-    a.fromBufferAttribute(pos, idx.getX(t));
-    b.fromBufferAttribute(pos, idx.getX(t + 1));
-    c.fromBufferAttribute(pos, idx.getX(t + 2));
-    area += ab.subVectors(b, a).cross(ac.subVectors(c, a)).length() * 0.5;
-  }
-  geom.computeBoundingBox();
-  if (!geom.boundingBox) return false;
-  const s = new THREE.Vector3();
-  geom.boundingBox.getSize(s);
-  const dims = [s.x, s.y, s.z].sort((x, y) => y - x);
-  const bigFace = dims[0] * dims[1];
-  return bigFace > 2500 && area < 0.2 * bigFace;
-}
+/**
+ * Above this triangle count a mesh is certainly well tessellated. The missing-
+ * face failure mode produces *sparse* meshes (the untessellated faces contribute
+ * no triangles), so skipping dense meshes bounds the cost of healing on large
+ * assemblies without missing any hollow parts.
+ */
+const HEAL_TRIANGLE_CAP = 200_000;
 
 /** Weld triangles by rounded position so boundary detection is meaningful. */
 function weld(pos: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, idx: THREE.BufferAttribute) {
@@ -215,17 +199,24 @@ function healMesh(mesh: THREE.Mesh): boolean {
 }
 
 /**
- * Repair every frame-like mesh under `group`. Returns the names of meshes that
- * were repaired. Only single-material meshes are touched (per-face-coloured
- * meshes keep geometry groups we must not disturb; the affected sheet-metal
- * panels are single-material).
+ * Repair every mesh under `group` that is missing planar faces. Returns the
+ * names of meshes that were repaired. Only single-material meshes are touched
+ * (per-face-coloured meshes keep geometry groups we must not disturb; the
+ * affected sheet-metal panels are single-material).
+ *
+ * We no longer gate on a "frame-like" area ratio: that only caught large flat
+ * sheets and missed smaller solids (e.g. brackets/rails) that are missing just
+ * a couple of faces. Instead we let `healMesh` run on any mesh under a triangle
+ * cap — it self-gates, capping only genuine planar boundary loops and leaving
+ * watertight meshes (no open boundary) untouched.
  */
-export function healFrameLikeMeshes(group: THREE.Object3D): string[] {
+export function healMissingFaces(group: THREE.Object3D): string[] {
   const healed: string[] = [];
   group.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.userData?.[MESH_TAG] || Array.isArray(mesh.material)) return;
-    if (!isFrameLike(mesh.geometry)) return;
+    const idx = mesh.geometry.getIndex();
+    if (!idx || idx.count > HEAL_TRIANGLE_CAP * 3) return;
     if (healMesh(mesh)) healed.push(mesh.name || "mesh");
   });
   return healed;
