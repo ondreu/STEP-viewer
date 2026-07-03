@@ -350,12 +350,8 @@ function buildMaterials(
 function standardMaterial(
   color?: [number, number, number] | null,
 ): THREE.MeshStandardMaterial {
-  // occt returns colours as sRGB display values (0..1). `new THREE.Color(r,g,b)`
-  // would treat them as *linear* (three's working space), rendering everything
-  // washed-out and desaturated; setRGB with SRGBColorSpace converts correctly,
-  // matching how the hex DEFAULT_COLOR is already interpreted.
   const c = color
-    ? new THREE.Color().setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace)
+    ? new THREE.Color(color[0], color[1], color[2])
     : new THREE.Color(DEFAULT_COLOR);
   return new THREE.MeshStandardMaterial({
     color: c,
