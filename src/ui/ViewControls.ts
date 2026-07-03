@@ -7,8 +7,10 @@ export interface ControlHandle {
 }
 
 /**
- * Floating control for the section (clipping) plane: axis picker, flip, and a
- * position slider. Showing the panel enables clipping; hiding it disables it.
+ * Floating control for the section (clipping) plane: axis picker and flip. The
+ * cut is moved and tilted directly with the in-model handles (an arrow to slide
+ * it along its normal, arcs to angle it). Showing the panel enables clipping;
+ * hiding it disables it.
  */
 export function createSectionControl(
   host: HTMLElement,
@@ -48,27 +50,6 @@ export function createSectionControl(
     flip.toggleClass("is-active", next);
   });
 
-  // Toggle the in-model handle between dragging the cut and tilting it (arcs).
-  const gizmo = el.createEl("button", {
-    cls: "step-viewer-btn clickable-icon step-viewer-viewctl-gizmo",
-    text: "Tilt",
-  });
-  setTooltip(gizmo, "Handle mode: drag to move the cut / tilt to rotate it");
-  gizmo.addEventListener("click", () => {
-    const mode = controller.toggleSectionGizmoMode();
-    gizmo.toggleClass("is-active", mode === "rotate");
-    gizmo.setText(mode === "rotate" ? "Move" : "Tilt");
-  });
-
-  const slider = el.createEl("input", {
-    cls: "step-viewer-viewctl-slider",
-    attr: { type: "range", min: "0", max: "1", step: "0.005", value: "0.5" },
-  });
-  setTooltip(slider, "Section position");
-  slider.addEventListener("input", () => {
-    controller.setSectionPosition(parseFloat(slider.value));
-  });
-
   return {
     el,
     setOpen(open) {
@@ -77,7 +58,8 @@ export function createSectionControl(
       if (open) {
         syncAxes();
         flip.toggleClass("is-active", controller.isSectionFlipped());
-        controller.setSectionPosition(parseFloat(slider.value));
+        // Re-centre the cut when opening; the in-model handles take it from there.
+        controller.setSectionPosition(0.5);
       }
     },
   };
