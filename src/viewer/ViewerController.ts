@@ -1451,6 +1451,37 @@ export class ViewerController {
     object.visible = false;
   }
 
+  /**
+   * Make every mesh under `object` see-through (so parts in front of it stop
+   * blocking what's behind), used by the RMB "Make this object transparent".
+   * Independent of the global transparency toggle: it sets material state on
+   * the object's meshes only. `makeAllSolid` reverts it.
+   */
+  makeObjectTransparent(object: THREE.Object3D): void {
+    object.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.userData?.[MESH_TAG]) return;
+      const material = mesh.material;
+      for (const m of Array.isArray(material) ? material : [material]) {
+        if (!m) continue;
+        m.transparent = true;
+        m.opacity = TRANSPARENT_OPACITY;
+        m.depthWrite = false;
+        m.needsUpdate = true;
+      }
+    });
+  }
+
+  /**
+   * Restore every mesh to fully opaque — reverts both `makeObjectTransparent`
+   * and the global transparency toggle. Used by the RMB "Make all objects
+   * solid".
+   */
+  makeAllSolid(): void {
+    this.transparent = false;
+    this.applyTransparency();
+  }
+
   /** Isolate `object`: select it and turn isolate on (hides everything else). */
   isolateObject(object: THREE.Object3D): void {
     this.setSelected(object);
@@ -1859,10 +1890,26 @@ export class ViewerController {
   /** Set one marker's scale so its world radius ≈ distance · MARKER_SCREEN. */
   private rescaleMarker(m: THREE.Mesh): void {
     m.getWorldPosition(_tmpV);
-    const dist = this.camera.position.distanceTo(_tmpV) || 1;
     let parentScale = 1;
     if (m.parent) parentScale = m.parent.getWorldScale(_tmpS).x || 1;
-    m.scale.setScalar((dist * MARKER_SCREEN) / parentScale);
+    m.scale.setScalar(this.markerWorldRadius(_tmpV) / parentScale);
+  }
+
+  /**
+   * World-space radius a marker needs at `point` to read as a constant on-screen
+   * size. Perspective uses camera distance (zoom changes position via dolly, so
+   * distance already reflects it). Orthographic zoom, however, changes the
+   * frustum — not the camera position — so distance is constant and markers
+   * wouldn't scale with zoom; we use the visible world height / zoom instead.
+   */
+  private markerWorldRadius(point: THREE.Vector3): number {
+    if (this.orthographic) {
+      const o = this.orthoCamera;
+      const visibleH = (o.top - o.bottom) / (o.zoom || 1);
+      return visibleH * MARKER_SCREEN;
+    }
+    const dist = this.camera.position.distanceTo(point) || 1;
+    return dist * MARKER_SCREEN;
   }
 
   private rescaleMarkers(): void {
@@ -1921,8 +1968,12 @@ export class ViewerController {
   /** Scale the preview by camera distance so it stays a constant screen size. */
   private rescalePreview(): void {
     if (!this.previewMesh?.visible) return;
-    const dist = this.camera.position.distanceTo(this.previewMesh.position);
-    this.previewMesh.scale.setScalar(Math.max(dist * 0.012, 1e-4));
+    // Same orthographic caveat as markerWorldRadius: ortho zoom changes the
+    // frustum, not the camera distance, so scale by visible height / zoom.
+    const r = this.orthographic
+      ? ((this.orthoCamera.top - this.orthoCamera.bottom) / (this.orthoCamera.zoom || 1)) * 0.012
+      : Math.max((this.camera.position.distanceTo(this.previewMesh.position) || 1) * 0.012, 1e-4);
+    this.previewMesh.scale.setScalar(Math.max(r, 1e-4));
   }
 
   private disposePreview(): void {

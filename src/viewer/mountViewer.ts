@@ -216,6 +216,14 @@ export function mountModel(
             treePanel.syncState();
           }),
       );
+      menu.addItem((i) =>
+        i
+          .setTitle("Make this object transparent")
+          .setIcon("layers")
+          .onClick(() => {
+            controller.makeObjectTransparent(part.object);
+          }),
+      );
       menu.addSeparator();
     }
     menu.addItem((i) =>
@@ -225,6 +233,14 @@ export function mountModel(
         .onClick(() => {
           controller.showAll();
           treePanel.syncState();
+        }),
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle("Make all objects solid")
+        .setIcon("box")
+        .onClick(() => {
+          controller.makeAllSolid();
         }),
     );
     menu.showAtPosition({ x: clientX, y: clientY });
