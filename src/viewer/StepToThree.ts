@@ -130,8 +130,17 @@ function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
     new THREE.Float32BufferAttribute(asFloat32(positions), 3),
   );
 
+  // Use the parser's per-vertex normals only when they are present, the right
+  // length, AND finite. Some large planar faces come back with NaN/Inf normals;
+  // three.js does not warn about those (its NaN check only covers positions via
+  // computeBoundingSphere), but a NaN normal makes the lighting term NaN so the
+  // whole surface renders as nothing — the mesh looks see-through while its edge
+  // overlay (which ignores normals) still shows. Fall back to computed normals
+  // in that case so the surface is drawn.
   const normals = mesh.attributes?.normal?.array;
-  if (normals && normals.length === positions.length) {
+  const normalsUsable =
+    !!normals && normals.length === positions.length && allFinite(normals);
+  if (normalsUsable) {
     geometry.setAttribute(
       "normal",
       new THREE.Float32BufferAttribute(asFloat32(normals), 3),
@@ -140,7 +149,14 @@ function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
 
   geometry.setIndex(new THREE.BufferAttribute(indexArray(indices), 1));
 
-  if (!normals || normals.length !== positions.length) {
+  if (!normalsUsable) {
+    if (normals && normals.length === positions.length) {
+      console.warn(
+        `[step-viewer] mesh "${mesh.name ?? "?"}": parser normals were ` +
+          `invalid (NaN/Inf or zero-length) — recomputing them so the ` +
+          `surface renders.`,
+      );
+    }
     geometry.computeVertexNormals();
   }
 
@@ -269,6 +285,26 @@ function standardMaterial(
 /** Use the occt buffer as a Float32Array, avoiding a copy if it already is one. */
 function asFloat32(a: OcctNumberArray): Float32Array {
   return a instanceof Float32Array ? a : new Float32Array(a);
+}
+
+/**
+ * True if every normal vector is finite AND has a usable (non-zero) length.
+ * A NaN/Inf component, or a zero-length (0,0,0) normal, both become NaN after
+ * the shader normalizes them, which makes the lit surface disappear — so either
+ * disqualifies the parser normals and forces a recompute.
+ */
+function allFinite(a: OcctNumberArray): boolean {
+  const MIN_LEN_SQ = 1e-10;
+  for (let i = 0; i + 2 < a.length; i += 3) {
+    const x = a[i];
+    const y = a[i + 1];
+    const z = a[i + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return false;
+    }
+    if (x * x + y * y + z * z < MIN_LEN_SQ) return false;
+  }
+  return true;
 }
 
 /**
