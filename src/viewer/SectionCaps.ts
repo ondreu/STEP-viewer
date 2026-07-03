@@ -18,7 +18,10 @@ import { MESH_TAG } from "./StepToThree";
  */
 export class SectionCaps {
   private capMesh: THREE.Mesh | null = null;
-  private stencilMeshes: THREE.Mesh[] = [];
+  /** Each stencil pair plus the model mesh it derives from, so visibility can be
+   *  gated by whether the clip plane actually intersects that mesh (see
+   *  `updateVisibility`). */
+  private stencilPairs: { mesh: THREE.Mesh; back: THREE.Mesh; front: THREE.Mesh }[] = [];
   private texture: THREE.CanvasTexture | null = null;
   private enabled = false;
 
@@ -31,16 +34,37 @@ export class SectionCaps {
   build(model: THREE.Group, diag: number): void {
     this.dispose();
 
+    let skippedOpen = 0;
     model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.userData?.[MESH_TAG]) return;
+      // The stencil technique (back faces +1 / front faces −1 ⇒ non-zero inside
+      // the solid) only yields a correct "inside" mask for watertight meshes.
+      // An open shell (STEP `OPEN_SHELL`, sheet-metal panels, parts occt fails
+      // to tessellate fully) has boundary edges, so a ray leaves the shell
+      // through one unmatched face and the stencil never returns to zero — the
+      // hatch then floods the whole shell's silhouette as a "shadow" instead of
+      // just its cut cross-section. Skip such meshes; their cut stays open
+      // (uncapped) rather than veiling the view.
+      if (!isWatertight(mesh.geometry)) {
+        skippedOpen++;
+        return;
+      }
       const back = this.stencilMesh(mesh.geometry, THREE.BackSide, THREE.IncrementWrapStencilOp);
       const front = this.stencilMesh(mesh.geometry, THREE.FrontSide, THREE.DecrementWrapStencilOp);
-      back.visible = this.enabled;
-      front.visible = this.enabled;
       mesh.add(back, front);
-      this.stencilMeshes.push(back, front);
+      this.stencilPairs.push({ mesh, back, front });
     });
+    if (skippedOpen > 0) {
+      console.info(
+        `[STEP Viewer] section cap: skipped ${skippedOpen} non-watertight mesh(es) ` +
+          `(open shells / parts with missing faces) to keep the hatch from flooding.`,
+      );
+    }
+    // Gate each pair on whether the clip plane actually intersects its mesh —
+    // parts the plane doesn't cut must not contribute stencil, or their
+    // screen-space silhouette hatches the cap plane as a "shadow".
+    this.updateVisibility();
 
     // The cut cross-section is bounded by the model's diagonal (a plane through
     // the bounding sphere spans at most its diameter), so size the cap to just
@@ -102,25 +126,59 @@ export class SectionCaps {
 
   setEnabled(on: boolean): void {
     this.enabled = on;
-    for (const m of this.stencilMeshes) m.visible = on;
+    if (on) this.updateVisibility();
+    else for (const p of this.stencilPairs) (p.back.visible = p.front.visible = false);
     if (this.capMesh) this.capMesh.visible = on;
   }
 
-  /** Orient the cap plane onto the clip plane, centred near `center`. */
+  /** Orient the cap plane onto the clip plane, centred near `center`, and
+   *  re-gate stencil pairs on whether the (possibly moved) plane still
+   *  intersects each mesh — a part the plane no longer cuts must drop out of
+   *  the stencil or its silhouette keeps hatching the cap ("shadow"). */
   update(center: THREE.Vector3): void {
     if (!this.capMesh) return;
     const n = this.plane.normal;
     const dist = this.plane.distanceToPoint(center);
     this.capMesh.position.copy(center).addScaledVector(n, -dist);
     this.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    this.updateVisibility();
+  }
+
+  /**
+   * Show a mesh's stencil pair only when the clip plane passes through its
+   * world bounding box. The stencil marks "inside the solid" in screen space;
+   * a part that sits entirely on the kept side (the plane doesn't actually cut
+   * it) would otherwise contribute a non-zero stencil across its whole
+   * silhouette, and the cap plane — which spans the cut region — would hatch
+   * that silhouette as a floating "shadow". Gating by intersection restricts
+   * the stencil to genuine cut cross-sections only.
+   */
+  private updateVisibility(): void {
+    if (!this.enabled) return;
+    const box = new THREE.Box3();
+    for (const p of this.stencilPairs) {
+      box.setFromObject(p.mesh);
+      const cut = !box.isEmpty() && this.plane.intersectsBox(box);
+      p.back.visible = cut;
+      p.front.visible = cut;
+    }
+  }
+
+  /** Re-gate stencil pairs after the model (not the plane) moves — e.g. a roll
+   *  or explode shifts parts relative to the world-space clip plane, so a part
+   *  that was cut may no longer be (and vice versa). Cheap to call per frame. */
+  refresh(): void {
+    this.updateVisibility();
   }
 
   dispose(): void {
-    for (const m of this.stencilMeshes) {
-      m.parent?.remove(m);
-      (m.material as THREE.Material).dispose();
+    for (const { back, front } of this.stencilPairs) {
+      back.parent?.remove(back);
+      front.parent?.remove(front);
+      (back.material as THREE.Material).dispose();
+      (front.material as THREE.Material).dispose();
     }
-    this.stencilMeshes = [];
+    this.stencilPairs = [];
     if (this.capMesh) {
       this.scene.remove(this.capMesh);
       this.capMesh.geometry.dispose();
@@ -132,7 +190,9 @@ export class SectionCaps {
   }
 }
 
-/** A tiled diagonal-hatch texture for the cut cap. */
+/**
+ * A tiled diagonal-hatch texture for the cut cap.
+ */
 function makeHatchTexture(): THREE.CanvasTexture {
   const c = activeDocument.createElement("canvas");
   c.width = 64;
@@ -152,4 +212,65 @@ function makeHatchTexture(): THREE.CanvasTexture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   return tex;
+}
+
+/**
+ * True if `geom` is a closed manifold (every undirected edge shared by exactly
+ * two triangles). The stencil cap relies on this: it reads as "inside the
+ * solid" only when back-face and front-face counts cancel out across paired
+ * triangles, which requires a watertight surface. Open shells (boundary edges)
+ * never return to zero and flood the hatch across the whole silhouette.
+ *
+ * Vertices are welded by rounded position first, because some tessellators
+ * (occt-import-js among them) can emit the same coordinate at multiple indices,
+ * which would otherwise split shared edges into boundary edges (false negative).
+ * Gated at a triangle cap so the per-mesh cost stays bounded on large
+ * assemblies; above it we assume watertight (huge solids are virtually always
+ * closed, and the alternative — a multi-second edge scan — stalls model load).
+ */
+const WATERTIGHT_TRIANGLE_CAP = 200_000;
+function isWatertight(geom: THREE.BufferGeometry): boolean {
+  const idx = geom.getIndex();
+  const pos = geom.getAttribute("position");
+  if (!idx || !pos) return false;
+  const triCount = idx.count / 3;
+  if (triCount < 4) return false; // a tetrahedron is the smallest closed solid
+  if (triCount > WATERTIGHT_TRIANGLE_CAP) return true;
+
+  // Weld vertices by rounded position → canonical integer id per coordinate.
+  const map = new Map<string, number>();
+  const welded = new Int32Array(idx.count);
+  let nextId = 0;
+  const v = new THREE.Vector3();
+  for (let t = 0; t < idx.count; t++) {
+    v.fromBufferAttribute(pos, idx.getX(t));
+    const k = `${Math.round(v.x * 1e4)},${Math.round(v.y * 1e4)},${Math.round(v.z * 1e4)}`;
+    let id = map.get(k);
+    if (id === undefined) {
+      id = nextId++;
+      map.set(k, id);
+    }
+    welded[t] = id;
+  }
+
+  // Count undirected edges (canonical pair order) across all triangles.
+  const count = new Map<number, number>();
+  const pair = (a: number, b: number): number =>
+    (a < b ? a : b) * 1000003 + (a < b ? b : a);
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = welded[t], b = welded[t + 1], c = welded[t + 2];
+    for (let e = 0; e < 3; e++) {
+      const u = e === 0 ? a : e === 1 ? b : c;
+      const w = e === 0 ? b : e === 1 ? c : a;
+      const k = pair(u, w);
+      count.set(k, (count.get(k) ?? 0) + 1);
+    }
+  }
+
+  // Watertight ⇔ every edge is shared by exactly two triangles. Any boundary
+  // (count 1) or non-manifold (>2) edge makes the stencil flood.
+  for (const n of count.values()) {
+    if (n !== 2) return false;
+  }
+  return true;
 }
