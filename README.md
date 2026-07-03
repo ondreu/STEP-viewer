@@ -37,7 +37,9 @@ Download `main.js`, `manifest.json` and `styles.css` from the
 
 ## Features
 
-- **Open `.step` / `.stp`** files straight from the file explorer.
+- **Open `.step` / `.stp`** files straight from the file explorer, plus
+  **`.obj` / `.stl`** triangle meshes.
+- **Export** the selected part (or the whole model) as an `.obj` mesh.
 - **3D rendering** with `three.js`: orbit / pan / zoom, per-face colours from
   the model (default material otherwise), edge display, and auto-fit on load.
 - **Navigation cube** (top-right) that tracks the camera — click a face to snap
@@ -160,6 +162,17 @@ many embeds doesn't exhaust the browser's limited WebGL contexts.
 Annotations **and pinned measurements** are keyed by file path, so notes and
 measurements added in the full view also appear in embeds of the same model, and
 vice versa.
+
+## Troubleshooting
+
+**Some surfaces render as hollow "frames" (you can see through them).** A few
+STEP files describe faces the geometry kernel can't tessellate — the surface
+comes back with no interior triangles, so it renders as just its outline. The
+STEP reader used here (`occt-import-js`) does no shape healing, so the fix is
+upstream: re-export the file through a healing tool. Opening the file in
+**FreeCAD** and exporting it again (as STEP, or as `.obj` / `.stl`, which this
+plugin now reads) rebuilds the faces cleanly. The plugin shows a notice listing
+the affected parts when this is detected.
 
 ## Development
 

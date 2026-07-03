@@ -26,7 +26,7 @@ export default class StepViewerPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(STEP_VIEW_TYPE, (leaf) => new StepView(leaf, this));
-    this.registerExtensions(["step", "stp"], STEP_VIEW_TYPE);
+    this.registerExtensions(["step", "stp", "obj", "stl"], STEP_VIEW_TYPE);
 
     this.registerMarkdownCodeBlockProcessor("step", (source, el, ctx) => {
       ctx.addChild(new StepEmbed(el, this, source, ctx.sourcePath));

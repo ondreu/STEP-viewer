@@ -1,7 +1,7 @@
 import { Notice, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { OcctResult } from "../types";
-import { stepToThree } from "./StepToThree";
+import { stepToThree, StepModel, detectUntessellatedMeshes } from "./StepToThree";
 import { ViewerController } from "./ViewerController";
 import { createToolbar, iconButton } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
@@ -58,10 +58,45 @@ export function mountViewer(
   result: OcctResult,
   opts: MountOptions,
 ): ViewerHandle {
-  const { group, tree } = stepToThree(result);
+  return mountModel(host, stepToThree(result), opts);
+}
+
+/**
+ * Build the interactive viewer from an already-constructed model (group +
+ * structure tree). Shared by the STEP path (via `mountViewer`) and the OBJ/STL
+ * mesh loaders, so all formats get the identical UI and behaviour.
+ */
+export function mountModel(
+  host: HTMLElement,
+  model: StepModel,
+  opts: MountOptions,
+): ViewerHandle {
+  const { group, tree } = model;
 
   const controller = new ViewerController(host);
   controller.setModel(group);
+
+  // Warn if the source file has faces the STEP reader couldn't tessellate:
+  // those parts render as hollow "frames" (see-through) with only their edges.
+  // The reader does no shape healing, so the fix is upstream — re-export the
+  // file through a healing tool (e.g. FreeCAD) or as OBJ/STL.
+  const untessellated = detectUntessellatedMeshes(group);
+  if (untessellated.length > 0) {
+    const list = untessellated.slice(0, 8).join(", ");
+    const more = untessellated.length > 8 ? `, +${untessellated.length - 8} more` : "";
+    console.warn(
+      `[STEP Viewer] ${untessellated.length} surface(s) failed to tessellate ` +
+        `(malformed faces in the source file) and render as hollow frames: ` +
+        `${list}${more}. Re-export the file through a healing tool (e.g. FreeCAD) ` +
+        `or as OBJ/STL to fix this.`,
+    );
+    new Notice(
+      `STEP Viewer: ${untessellated.length} surface(s) couldn't be rendered — ` +
+        `the file has malformed faces. Re-export it through FreeCAD (or as ` +
+        `OBJ/STL) to view them. See console for the list.`,
+      10000,
+    );
+  }
 
   const labelLayer = new LabelLayer(host);
 

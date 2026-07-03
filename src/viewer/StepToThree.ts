@@ -182,6 +182,86 @@ function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
 }
 
 /**
+ * Wrap a raw BufferGeometry (e.g. from the OBJ/STL loaders) into a viewer-ready
+ * mesh: ensure finite normals, apply the standard material, tag it as pickable,
+ * and attach the toggleable edge overlay. Shared by the mesh-file loaders so
+ * OBJ/STL parts behave exactly like STEP parts (hover, select, edges, section).
+ */
+export function createRenderMesh(
+  geometry: THREE.BufferGeometry,
+  name: string,
+  withEdges: boolean,
+  color?: [number, number, number] | null,
+): THREE.Mesh {
+  if (!geometry.getIndex() && !geometry.getAttribute("normal")) {
+    geometry.computeVertexNormals();
+  } else {
+    const normals = geometry.getAttribute("normal");
+    if (!normals || !allFinite(normals.array as OcctNumberArray)) {
+      geometry.computeVertexNormals();
+    }
+  }
+
+  const mesh = new THREE.Mesh(geometry, standardMaterial(color));
+  mesh.name = name || "mesh";
+  mesh.userData[MESH_TAG] = true;
+
+  if (withEdges) {
+    const edgesGeom = new THREE.EdgesGeometry(geometry, EDGE_THRESHOLD_ANGLE);
+    const edges = new THREE.LineSegments(
+      edgesGeom,
+      new THREE.LineBasicMaterial({ color: EDGE_COLOR }),
+    );
+    edges.name = "edges";
+    edges.userData[EDGES_TAG] = true;
+    edges.raycast = () => {};
+    mesh.add(edges);
+  }
+  return mesh;
+}
+
+/**
+ * Names of meshes whose triangulated surface area is far below what their
+ * bounding box implies — i.e. large planar faces the STEP reader failed to
+ * tessellate (occt-import-js does no shape healing), so the part renders as a
+ * hollow "frame" you can see through. Used to warn the user that the source
+ * file has malformed faces and should be re-exported through a healing tool.
+ */
+export function detectUntessellatedMeshes(group: THREE.Object3D): string[] {
+  const names: string[] = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+  const box = new THREE.Box3();
+  const size = new THREE.Vector3();
+
+  group.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.userData?.[MESH_TAG] || !mesh.geometry) return;
+    const geom = mesh.geometry;
+    const pos = geom.getAttribute("position");
+    const idx = geom.getIndex();
+    if (!pos || !idx || idx.count < 3) return;
+
+    let area = 0;
+    for (let t = 0; t < idx.count; t += 3) {
+      a.fromBufferAttribute(pos, idx.getX(t));
+      b.fromBufferAttribute(pos, idx.getX(t + 1));
+      c.fromBufferAttribute(pos, idx.getX(t + 2));
+      area += ab.subVectors(b, a).cross(ac.subVectors(c, a)).length() * 0.5;
+    }
+    geom.computeBoundingBox();
+    if (!geom.boundingBox) return;
+    box.copy(geom.boundingBox).getSize(size);
+    const dims = [size.x, size.y, size.z].sort((x, y) => y - x);
+    const bigFace = dims[0] * dims[1];
+    if (bigFace < 2500) return; // ignore small parts (< 50×50 mm face)
+    // A solid sheet's surface ≈ 2×bigFace; a frame-only part is a small fraction.
+    if (area < 0.2 * bigFace) names.push(mesh.name || "mesh");
+  });
+  return names;
+}
+
+/**
  * Build the mesh material(s). If `brep_faces` carry per-face colors, we split
  * the geometry into groups and return a material array; otherwise a single
  * MeshStandardMaterial (mesh color or default).
