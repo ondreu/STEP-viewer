@@ -4,7 +4,6 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { fitCameraToObject } from "./fitCamera";
 import { EDGES_TAG, MESH_TAG } from "./StepToThree";
-import { SectionCaps } from "./SectionCaps";
 
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
@@ -139,14 +138,15 @@ export class ViewerController {
   private sectionFlip = false;
   private sectionT = 0.5;
   private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
-  private sectionCaps: SectionCaps | null = null;
   // Interactive section gizmo: a proxy transform (its local +Z is the cut
   // normal) driven either by the panel controls or, directly in the model, by a
   // TransformControls handle. A faint quad visualises the cutting plane.
   private sectionProxy: THREE.Object3D | null = null;
   private sectionPlaneMesh: THREE.Mesh | null = null;
-  private sectionGizmo: TransformControls | null = null;
-  private sectionGizmoMode: "translate" | "rotate" = "translate";
+  // Both handles are shown at once: an arrow to move the cut along its normal
+  // and two arcs to tilt it, so neither has to be toggled into view.
+  private sectionGizmoMove: TransformControls | null = null;
+  private sectionGizmoTilt: TransformControls | null = null;
 
   // Explode state: per top-level part, its base local position + outward dir.
   private exploded = 0;
@@ -351,8 +351,6 @@ export class ViewerController {
     this.applyEdgesVisibility();
     this.applyTransparency();
     this.applySection();
-    if (!this.sectionCaps) this.sectionCaps = new SectionCaps(this.scene, this.sectionPlane);
-    this.sectionCaps.build(group, diag);
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
   }
@@ -494,7 +492,8 @@ export class ViewerController {
 
     this.orthographic = ortho;
     this.rebuildControls(target);
-    if (this.sectionGizmo) this.sectionGizmo.camera = this.camera;
+    if (this.sectionGizmoMove) this.sectionGizmoMove.camera = this.camera;
+    if (this.sectionGizmoTilt) this.sectionGizmoTilt.camera = this.camera;
     return this.orthographic;
   }
 
@@ -529,7 +528,6 @@ export class ViewerController {
       this.updateSectionPlane();
     }
     this.applySection();
-    this.sectionCaps?.setEnabled(on);
     this.showSectionGizmo(on);
     return this.sectionEnabled;
   }
@@ -537,22 +535,6 @@ export class ViewerController {
   setSectionAxis(axis: "x" | "y" | "z"): void {
     this.sectionAxis = axis;
     this.updateSectionPlane();
-  }
-
-  /** Switch the in-model handle between move (drag the cut) and tilt (rotate the
-   *  cut plane) — the two rotation arcs, like a CAD viewer's section gizmo. */
-  setSectionGizmoMode(mode: "translate" | "rotate"): void {
-    this.sectionGizmoMode = mode;
-    this.applySectionGizmoMode();
-  }
-
-  getSectionGizmoMode(): "translate" | "rotate" {
-    return this.sectionGizmoMode;
-  }
-
-  toggleSectionGizmoMode(): "translate" | "rotate" {
-    this.setSectionGizmoMode(this.sectionGizmoMode === "translate" ? "rotate" : "translate");
-    return this.sectionGizmoMode;
   }
 
   setSectionPosition(t: number): void {
@@ -612,13 +594,11 @@ export class ViewerController {
     this.sectionPlane.normal.copy(n);
     // distance(p) = n·p + constant, keeps p where distance ≥ 0.
     this.sectionPlane.constant = -n.dot(this.sectionProxy.position);
-    const box = new THREE.Box3().setFromObject(this.model);
-    this.sectionCaps?.update(box.getCenter(new THREE.Vector3()));
   }
 
-  /** Create the section proxy, its faint plane quad and the drag/tilt gizmo. */
+  /** Create the section proxy, its faint plane quad and the move + tilt gizmos. */
   private ensureSectionGizmo(): void {
-    if (this.sectionGizmo) return;
+    if (this.sectionGizmoMove) return;
     const proxy = new THREE.Object3D();
     this.scene.add(proxy);
     this.sectionProxy = proxy;
@@ -636,38 +616,46 @@ export class ViewerController {
     proxy.add(mesh);
     this.sectionPlaneMesh = mesh;
 
-    const tc = new TransformControls(this.camera, this.renderer.domElement);
-    tc.setSpace("local"); // so the translate arrow points along the cut normal
-    tc.attach(proxy);
-    // Suspend orbiting while dragging the gizmo, and re-derive the cut live.
-    tc.addEventListener("dragging-changed", (event) => {
-      this.controls.enabled = !(event as unknown as { value: boolean }).value;
-    });
-    tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
-    this.scene.add(tc);
-    this.sectionGizmo = tc;
-    this.applySectionGizmoMode();
+    const makeGizmo = (mode: "translate" | "rotate"): TransformControls => {
+      const tc = new TransformControls(this.camera, this.renderer.domElement);
+      tc.setSpace("local"); // so the translate arrow points along the cut normal
+      tc.setMode(mode);
+      tc.attach(proxy);
+      // Suspend orbiting while dragging either gizmo, and re-derive the cut live.
+      tc.addEventListener("dragging-changed", (event) => {
+        this.controls.enabled = !(event as unknown as { value: boolean }).value;
+      });
+      tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
+      this.scene.add(tc);
+      return tc;
+    };
+
+    // Move: only the along-normal arrow. Tilt: only the two rotation arcs. Both
+    // stay on screen together so you can push the cut or angle it without a mode
+    // switch — the pickers don't overlap (disjoint axes).
+    const move = makeGizmo("translate");
+    move.showX = false;
+    move.showY = false;
+    move.showZ = true;
+    const tilt = makeGizmo("rotate");
+    tilt.showX = true;
+    tilt.showY = true;
+    tilt.showZ = false;
+    this.sectionGizmoMove = move;
+    this.sectionGizmoTilt = tilt;
     this.showSectionGizmo(this.sectionEnabled);
   }
 
-  /** Show only the normal arrow (move) or the two tilt arcs (rotate). */
-  private applySectionGizmoMode(): void {
-    const tc = this.sectionGizmo;
-    if (!tc) return;
-    tc.setMode(this.sectionGizmoMode);
-    const rotating = this.sectionGizmoMode === "rotate";
-    tc.showX = rotating; // tilt arc
-    tc.showY = rotating; // tilt arc
-    tc.showZ = !rotating; // move-along-normal arrow
-  }
-
   private showSectionGizmo(on: boolean): void {
-    if (!this.sectionGizmo || !this.sectionProxy || !this.sectionPlaneMesh) return;
-    this.sectionGizmo.enabled = on;
-    this.sectionGizmo.visible = on;
+    if (!this.sectionProxy || !this.sectionPlaneMesh) return;
+    for (const tc of [this.sectionGizmoMove, this.sectionGizmoTilt]) {
+      if (!tc) continue;
+      tc.enabled = on;
+      tc.visible = on;
+      if (on) tc.attach(this.sectionProxy);
+      else tc.detach();
+    }
     this.sectionPlaneMesh.visible = on;
-    if (on) this.sectionGizmo.attach(this.sectionProxy);
-    else this.sectionGizmo.detach();
   }
 
   /** Apply (or clear) the clip plane on model surfaces + edges only. */
@@ -1358,9 +1346,14 @@ export class ViewerController {
 
   /** Right-click: report the part under the cursor so the UI can pop a menu. */
   private onContextMenuEvent = (e: MouseEvent): void => {
+    // Always swallow the browser's native menu over the canvas.
+    e.preventDefault();
     if (!this.onContextMenu) return;
     if (this.measureEnabled || this.annotateEnabled || this.immersive) return;
-    e.preventDefault();
+    // The right button also pans (OrbitControls): if it was dragged, treat it as
+    // a pan and don't pop the menu — only a stationary right-click opens it.
+    const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
+    if (moved > CLICK_MOVE_THRESHOLD) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -1395,16 +1388,27 @@ export class ViewerController {
   }
 
   private pickSelect(e: PointerEvent): void {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
+    // In immersive mode the pointer is locked, so screen coordinates are frozen:
+    // pick from the centre of the view (where the crosshair sits) instead.
+    const ndc = this.eventNdc(e);
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = this.raycaster.intersectObjects(this.visiblePickables(), false)[0];
     const mesh = (hit?.object as THREE.Mesh) ?? null;
+    // Isolate is not sticky: a click in the scene exits isolate rather than
+    // re-isolating onto whatever was clicked (you enable it via the RMB menu).
+    if (this.isolated) this.toggleIsolate();
     this.setSelected(mesh);
     this.onSelectPart?.(mesh ? this.describePart(mesh) : null);
+  }
+
+  /** Pointer position in NDC, or screen-centre while the pointer is locked. */
+  private eventNdc(e: PointerEvent): THREE.Vector2 {
+    if (this.immersive) return new THREE.Vector2(0, 0);
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
   }
 
   private pickAnnotate(e: PointerEvent): void {
@@ -1991,15 +1995,15 @@ export class ViewerController {
     this.clearMeasurement(true);
     this.scaleMarkers = [];
     this.disposePreview();
-    this.sectionCaps?.dispose();
-    this.sectionCaps = null;
 
-    if (this.sectionGizmo) {
-      this.sectionGizmo.detach();
-      this.sectionGizmo.dispose();
-      this.scene.remove(this.sectionGizmo);
-      this.sectionGizmo = null;
+    for (const tc of [this.sectionGizmoMove, this.sectionGizmoTilt]) {
+      if (!tc) continue;
+      tc.detach();
+      tc.dispose();
+      this.scene.remove(tc);
     }
+    this.sectionGizmoMove = null;
+    this.sectionGizmoTilt = null;
     if (this.sectionPlaneMesh) {
       this.sectionPlaneMesh.geometry.dispose();
       (this.sectionPlaneMesh.material as THREE.Material).dispose();

@@ -179,6 +179,8 @@ export function mountModel(
     selectedInfo = enrich(part);
     info.update(selectedInfo);
     treePanel.reveal(part?.object ?? null);
+    // A scene click may have exited isolate (it isn't sticky) — resync the tree.
+    treePanel.syncState();
   };
   // Double-clicking a part frames it (done in the controller) and, here, opens
   // the structure tree and reveals the part in it.
