@@ -8,7 +8,7 @@ import {
 } from "../viewer/params";
 import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
-import { hasRenderableMeshes } from "../viewer/StepToThree";
+import { hasRenderableMeshes, isWireframeOnly } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
 import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache";
 import { HasStepSettings } from "../settings";
@@ -161,8 +161,11 @@ export class StepEmbed extends MarkdownRenderChild {
       this.host.empty();
       if (!hasRenderableMeshes(result)) {
         this.message(
-          `No usable geometry (${formatFileSize(file.stat.size)}). The model may be too ` +
-            "large for the in-browser parser, or use unsupported entities.",
+          isWireframeOnly(stepText)
+            ? "This file contains only wireframe curves (no surface or solid bodies), " +
+                "so there is nothing to render. Re-export it with solid/surface geometry."
+            : `No usable geometry (${formatFileSize(file.stat.size)}). The model may be too ` +
+                "large for the in-browser parser, or use unsupported entities.",
         );
         return;
       }

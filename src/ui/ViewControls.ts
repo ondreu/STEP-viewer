@@ -50,6 +50,29 @@ export function createSectionControl(
     flip.toggleClass("is-active", next);
   });
 
+  // Tilt the cut off its axis with two static sliders (about the plane's two
+  // in-plane axes). Sliders instead of a rotate gizmo: they stay put on screen
+  // and can't be grabbed together with the in-model move arrow.
+  const tilt = el.createDiv({ cls: "step-viewer-viewctl-tilt" });
+  const makeTilt = (label: string): HTMLInputElement => {
+    const row = tilt.createDiv({ cls: "step-viewer-viewctl-tilt-row" });
+    row.createSpan({ cls: "step-viewer-viewctl-tilt-label", text: label });
+    const s = row.createEl("input", {
+      cls: "step-viewer-viewctl-slider",
+      attr: { type: "range", min: "-90", max: "90", step: "1", value: "0" },
+    });
+    setTooltip(s, `Tilt the cut (${label})`);
+    return s;
+  };
+  const tiltA = makeTilt("Tilt ↕");
+  const tiltB = makeTilt("Tilt ↔");
+  const applyTilt = (): void => {
+    const deg = Math.PI / 180;
+    controller.setSectionTilt(parseFloat(tiltA.value) * deg, parseFloat(tiltB.value) * deg);
+  };
+  tiltA.addEventListener("input", applyTilt);
+  tiltB.addEventListener("input", applyTilt);
+
   return {
     el,
     setOpen(open) {
@@ -58,7 +81,10 @@ export function createSectionControl(
       if (open) {
         syncAxes();
         flip.toggleClass("is-active", controller.isSectionFlipped());
-        // Re-centre the cut when opening; the in-model handles take it from there.
+        // Start each session flat and centred; the arrow + tilt sliders take over.
+        tiltA.value = "0";
+        tiltB.value = "0";
+        controller.setSectionTilt(0, 0);
         controller.setSectionPosition(0.5);
       }
     },

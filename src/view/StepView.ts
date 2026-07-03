@@ -9,7 +9,7 @@ import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache"
 import { mountViewer, mountModel, ViewerHandle } from "../viewer/mountViewer";
 import { objToStepModel, stlToStepModel } from "../viewer/MeshLoaders";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
-import { hasRenderableMeshes } from "../viewer/StepToThree";
+import { hasRenderableMeshes, isWireframeOnly } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
 import { HasStepSettings } from "../settings";
 
@@ -150,7 +150,7 @@ export class StepView extends FileView {
 
       if (!hasRenderableMeshes(result)) {
         loadingEl.remove();
-        this.showNoGeometry(host, file, token, deflection, logs);
+        this.showNoGeometry(host, file, token, deflection, logs, stepText);
         return;
       }
 
@@ -216,22 +216,38 @@ export class StepView extends FileView {
     token: number,
     deflection: number,
     logs: string[] = [],
+    stepText?: string,
   ): void {
     const el = host.createDiv({ cls: "step-viewer-overlay step-viewer-error" });
+    // A wireframe-only file has nothing to tessellate: no retry or coarser mesh
+    // will ever help, so treat it as its own case with a precise explanation.
+    const wireframe = isWireframeOnly(stepText);
     el.createEl("div", {
-      text: "No geometry could be displayed",
+      text: wireframe ? "No surfaces or solids to display" : "No geometry could be displayed",
       cls: "step-viewer-message",
     });
     // If OCCT's output hints at an allocation failure, say so plainly — that's
     // the memory ceiling, not an unsupported file.
     const outOfMemory = logs.some((l) => /memory|alloc|bad_alloc|out of/i.test(l));
-    const canRetry = coarserDeflection(deflection) > deflection;
-    const detail = outOfMemory
-      ? `This ${formatFileSize(file.stat.size)} model ran the in-browser (WASM) parser ` +
-        "out of memory before it could produce geometry."
-      : `The parser produced no usable geometry from this ${formatFileSize(file.stat.size)} ` +
+    const canRetry = !wireframe && coarserDeflection(deflection) > deflection;
+    let detail: string;
+    if (wireframe) {
+      detail =
+        `This file contains only wireframe curves (edges / sketch geometry) — ` +
+        "no surface or solid bodies — so there is nothing to render as a 3D model. " +
+        "Re-export it from your CAD program with solid or surface geometry included " +
+        "(in SolidWorks: File → Save As → STEP, and make sure solid/surface bodies " +
+        "are exported, not just curves).";
+    } else if (outOfMemory) {
+      detail =
+        `This ${formatFileSize(file.stat.size)} model ran the in-browser (WASM) parser ` +
+        "out of memory before it could produce geometry.";
+    } else {
+      detail =
+        `The parser produced no usable geometry from this ${formatFileSize(file.stat.size)} ` +
         "file. It may be too large for the in-browser (WASM) parser, or it uses " +
         "entities the parser doesn't support.";
+    }
     el.createEl("div", {
       text: detail + (canRetry ? " Retrying coarser (faster) may help." : ""),
       cls: "step-viewer-message-sub",

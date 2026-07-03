@@ -54,6 +54,27 @@ export function hasRenderableMeshes(result: OcctResult): boolean {
   );
 }
 
+/**
+ * True when a STEP file carries only wireframe/curve geometry (a
+ * `GEOMETRIC_CURVE_SET` / `GEOMETRICALLY_BOUNDED_WIREFRAME` of B-splines, lines,
+ * circles…) and no surfaces or solids. occt-import-js only tessellates faces and
+ * solids, so such a file legitimately yields zero meshes — this lets the UI say
+ * exactly that instead of blaming file size or unsupported entities. Returns
+ * false when the text is unavailable (huge files skip decoding) so callers fall
+ * back to the generic message rather than guessing.
+ */
+export function isWireframeOnly(text?: string): boolean {
+  if (!text) return false;
+  const hasSurfacesOrSolids =
+    /ADVANCED_FACE|MANIFOLD_SOLID_BREP|CLOSED_SHELL|OPEN_SHELL|SHELL_BASED_SURFACE_MODEL|FACETED_BREP|MANIFOLD_SURFACE_SHAPE_REPRESENTATION|GEOMETRICALLY_BOUNDED_SURFACE/.test(
+      text,
+    );
+  if (hasSurfacesOrSolids) return false;
+  return /GEOMETRIC_CURVE_SET|GEOMETRICALLY_BOUNDED_WIREFRAME|B_SPLINE_CURVE|TRIMMED_CURVE|EDGE_CURVE/.test(
+    text,
+  );
+}
+
 export function stepToThree(result: OcctResult): StepModel {
   const root: OcctNode =
     result.root ?? { name: "Model", meshes: [], children: [] };

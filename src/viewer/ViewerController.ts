@@ -4,13 +4,13 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { fitCameraToObject } from "./fitCamera";
 import { EDGES_TAG, MESH_TAG } from "./StepToThree";
+import { SectionCaps } from "./SectionCaps";
 
 const TRANSPARENT_OPACITY = 0.35;
 const MEASURE_COLOR = 0xff5500;
 const HIGHLIGHT_COLOR = 0xff8a00;
 const SELECT_COLOR = 0x3b82f6;
 const SNAP_COLOR = 0x22cc66;
-const SECTION_PLANE_COLOR = 0x3b82f6;
 const ANNOT_COLOR = 0xffc531;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
@@ -138,15 +138,20 @@ export class ViewerController {
   private sectionFlip = false;
   private sectionT = 0.5;
   private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+  // Tilt of the cut away from its axis-aligned normal, in radians, about the
+  // plane's two in-plane axes (driven by the panel sliders). Kept separate from
+  // the axis/flip so tilting composes on top of the chosen base direction.
+  private sectionTiltX = 0;
+  private sectionTiltY = 0;
   // Interactive section gizmo: a proxy transform (its local +Z is the cut
   // normal) driven either by the panel controls or, directly in the model, by a
-  // TransformControls handle. A faint quad visualises the cutting plane.
+  // single TransformControls arrow that slides the cut along its normal. Tilting
+  // is done with the panel sliders (a rotate gizmo's arcs swim with the camera
+  // and are trivially grabbed together with the arrow, so we don't use one). The
+  // hatch cap (SectionCaps) visualises the cut where it passes through material.
   private sectionProxy: THREE.Object3D | null = null;
-  private sectionPlaneMesh: THREE.Mesh | null = null;
-  // Both handles are shown at once: an arrow to move the cut along its normal
-  // and two arcs to tilt it, so neither has to be toggled into view.
-  private sectionGizmoMove: TransformControls | null = null;
-  private sectionGizmoTilt: TransformControls | null = null;
+  private sectionCaps: SectionCaps | null = null;
+  private sectionGizmo: TransformControls | null = null;
 
   // Explode state: per top-level part, its base local position + outward dir.
   private exploded = 0;
@@ -351,6 +356,8 @@ export class ViewerController {
     this.applyEdgesVisibility();
     this.applyTransparency();
     this.applySection();
+    if (!this.sectionCaps) this.sectionCaps = new SectionCaps(this.scene, this.sectionPlane);
+    this.sectionCaps.build(group, diag);
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
   }
@@ -492,8 +499,7 @@ export class ViewerController {
 
     this.orthographic = ortho;
     this.rebuildControls(target);
-    if (this.sectionGizmoMove) this.sectionGizmoMove.camera = this.camera;
-    if (this.sectionGizmoTilt) this.sectionGizmoTilt.camera = this.camera;
+    if (this.sectionGizmo) this.sectionGizmo.camera = this.camera;
     return this.orthographic;
   }
 
@@ -528,6 +534,7 @@ export class ViewerController {
       this.updateSectionPlane();
     }
     this.applySection();
+    this.sectionCaps?.setEnabled(on);
     this.showSectionGizmo(on);
     return this.sectionEnabled;
   }
@@ -544,7 +551,19 @@ export class ViewerController {
 
   setSectionFlip(flip: boolean): void {
     this.sectionFlip = flip;
-    this.updateSectionPlane();
+    // Flipping only swaps the kept side — keep the cut where it is.
+    this.updateSectionOrientation();
+  }
+
+  /** Tilt the cut off its axis-aligned normal (radians), about the plane's two
+   *  in-plane axes. Driven by the panel sliders — a static, always-visible
+   *  control that (unlike a rotate gizmo) doesn't swim with the camera. Tilting
+   *  pivots about the cut's current position (kept), so it composes with an
+   *  arrow drag instead of snapping the cut back to centre. */
+  setSectionTilt(tiltX: number, tiltY: number): void {
+    this.sectionTiltX = tiltX;
+    this.sectionTiltY = tiltY;
+    this.updateSectionOrientation();
   }
 
   isSectioning(): boolean {
@@ -558,9 +577,9 @@ export class ViewerController {
   }
 
   /**
-   * Position the section proxy from the panel controls (axis + slider + flip),
-   * then derive the clip plane from it. The gizmo shares this proxy, so dragging
-   * the handle and moving the slider are two ways to drive the same cut.
+   * Position the section proxy from the panel controls (axis + flip + tilt),
+   * then derive the clip plane from it. The move gizmo shares this proxy, so
+   * dragging the arrow and the panel controls drive the same cut.
    */
   private updateSectionPlane(): void {
     if (!this.model) return;
@@ -572,20 +591,39 @@ export class ViewerController {
     const lo = box.min[axis];
     const hi = box.max[axis];
     const pos = lo + (hi - lo) * this.sectionT;
-    const n = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
-    if (this.sectionFlip) n.negate();
     const point = box.getCenter(new THREE.Vector3());
     point[axis] = pos;
     proxy.position.copy(point);
-    proxy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    proxy.quaternion.copy(this.sectionOrientation());
     proxy.updateMatrixWorld(true);
-    const diag = box.getSize(new THREE.Vector3()).length() || 1;
-    this.sectionPlaneMesh?.scale.set(diag, diag, 1);
     this.deriveSectionPlaneFromProxy();
   }
 
+  /** Re-orient the cut in place (tilt / flip) without moving it, so it composes
+   *  with wherever the arrow last dragged the cut to. */
+  private updateSectionOrientation(): void {
+    if (!this.model || !this.sectionProxy) return;
+    this.ensureSectionGizmo();
+    this.sectionProxy.quaternion.copy(this.sectionOrientation());
+    this.sectionProxy.updateMatrixWorld(true);
+    this.deriveSectionPlaneFromProxy();
+  }
+
+  /** The cut's orientation: the axis-aligned base normal (flip included) with the
+   *  two tilt angles applied about the plane's local X/Y. */
+  private sectionOrientation(): THREE.Quaternion {
+    const axis = this.sectionAxis;
+    const n = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+    if (this.sectionFlip) n.negate();
+    const base = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    const tilt = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(this.sectionTiltX, this.sectionTiltY, 0, "XYZ"),
+    );
+    return base.multiply(tilt); // tilt in the plane's local frame
+  }
+
   /** Read the clip plane off the proxy's transform (its local +Z is the normal),
-   *  so both the slider and the in-model gizmo update the same cut. */
+   *  so both the panel controls and the in-model arrow update the same cut. */
   private deriveSectionPlaneFromProxy(): void {
     if (!this.model || !this.sectionProxy) return;
     const n = new THREE.Vector3(0, 0, 1)
@@ -594,68 +632,40 @@ export class ViewerController {
     this.sectionPlane.normal.copy(n);
     // distance(p) = n·p + constant, keeps p where distance ≥ 0.
     this.sectionPlane.constant = -n.dot(this.sectionProxy.position);
+    const box = new THREE.Box3().setFromObject(this.model);
+    this.sectionCaps?.update(box.getCenter(new THREE.Vector3()));
   }
 
-  /** Create the section proxy, its faint plane quad and the move + tilt gizmos. */
+  /** Create the section proxy and the single move-along-normal arrow gizmo. */
   private ensureSectionGizmo(): void {
-    if (this.sectionGizmoMove) return;
+    if (this.sectionGizmo) return;
     const proxy = new THREE.Object3D();
     this.scene.add(proxy);
     this.sectionProxy = proxy;
 
-    const mat = new THREE.MeshBasicMaterial({
-      color: SECTION_PLANE_COLOR,
-      transparent: true,
-      opacity: 0.12, // barely visible, as requested
-      side: THREE.DoubleSide,
-      depthWrite: false,
+    const tc = new TransformControls(this.camera, this.renderer.domElement);
+    tc.setSpace("local"); // so the arrow points along the (tilted) cut normal
+    tc.setMode("translate");
+    tc.attach(proxy);
+    tc.showX = false;
+    tc.showY = false;
+    tc.showZ = true; // only the along-normal arrow
+    // Suspend orbiting while dragging, and re-derive the cut live.
+    tc.addEventListener("dragging-changed", (event) => {
+      this.controls.enabled = !(event as unknown as { value: boolean }).value;
     });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-    mesh.raycast = () => {}; // never intercepts measurement/hover picks
-    mesh.renderOrder = 1;
-    proxy.add(mesh);
-    this.sectionPlaneMesh = mesh;
-
-    const makeGizmo = (mode: "translate" | "rotate"): TransformControls => {
-      const tc = new TransformControls(this.camera, this.renderer.domElement);
-      tc.setSpace("local"); // so the translate arrow points along the cut normal
-      tc.setMode(mode);
-      tc.attach(proxy);
-      // Suspend orbiting while dragging either gizmo, and re-derive the cut live.
-      tc.addEventListener("dragging-changed", (event) => {
-        this.controls.enabled = !(event as unknown as { value: boolean }).value;
-      });
-      tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
-      this.scene.add(tc);
-      return tc;
-    };
-
-    // Move: only the along-normal arrow. Tilt: only the two rotation arcs. Both
-    // stay on screen together so you can push the cut or angle it without a mode
-    // switch — the pickers don't overlap (disjoint axes).
-    const move = makeGizmo("translate");
-    move.showX = false;
-    move.showY = false;
-    move.showZ = true;
-    const tilt = makeGizmo("rotate");
-    tilt.showX = true;
-    tilt.showY = true;
-    tilt.showZ = false;
-    this.sectionGizmoMove = move;
-    this.sectionGizmoTilt = tilt;
+    tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
+    this.scene.add(tc);
+    this.sectionGizmo = tc;
     this.showSectionGizmo(this.sectionEnabled);
   }
 
   private showSectionGizmo(on: boolean): void {
-    if (!this.sectionProxy || !this.sectionPlaneMesh) return;
-    for (const tc of [this.sectionGizmoMove, this.sectionGizmoTilt]) {
-      if (!tc) continue;
-      tc.enabled = on;
-      tc.visible = on;
-      if (on) tc.attach(this.sectionProxy);
-      else tc.detach();
-    }
-    this.sectionPlaneMesh.visible = on;
+    if (!this.sectionProxy || !this.sectionGizmo) return;
+    this.sectionGizmo.enabled = on;
+    this.sectionGizmo.visible = on;
+    if (on) this.sectionGizmo.attach(this.sectionProxy);
+    else this.sectionGizmo.detach();
   }
 
   /** Apply (or clear) the clip plane on model surfaces + edges only. */
@@ -1995,19 +2005,14 @@ export class ViewerController {
     this.clearMeasurement(true);
     this.scaleMarkers = [];
     this.disposePreview();
+    this.sectionCaps?.dispose();
+    this.sectionCaps = null;
 
-    for (const tc of [this.sectionGizmoMove, this.sectionGizmoTilt]) {
-      if (!tc) continue;
-      tc.detach();
-      tc.dispose();
-      this.scene.remove(tc);
-    }
-    this.sectionGizmoMove = null;
-    this.sectionGizmoTilt = null;
-    if (this.sectionPlaneMesh) {
-      this.sectionPlaneMesh.geometry.dispose();
-      (this.sectionPlaneMesh.material as THREE.Material).dispose();
-      this.sectionPlaneMesh = null;
+    if (this.sectionGizmo) {
+      this.sectionGizmo.detach();
+      this.sectionGizmo.dispose();
+      this.scene.remove(this.sectionGizmo);
+      this.sectionGizmo = null;
     }
     if (this.sectionProxy) {
       this.scene.remove(this.sectionProxy);
