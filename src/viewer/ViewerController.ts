@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { fitCameraToObject } from "./fitCamera";
 import { EDGES_TAG, MESH_TAG } from "./StepToThree";
 import { SectionCaps } from "./SectionCaps";
@@ -10,6 +11,7 @@ const MEASURE_COLOR = 0xff5500;
 const HIGHLIGHT_COLOR = 0xff8a00;
 const SELECT_COLOR = 0x3b82f6;
 const SNAP_COLOR = 0x22cc66;
+const SECTION_PLANE_COLOR = 0x3b82f6;
 const ANNOT_COLOR = 0xffc531;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
@@ -138,6 +140,13 @@ export class ViewerController {
   private sectionT = 0.5;
   private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
   private sectionCaps: SectionCaps | null = null;
+  // Interactive section gizmo: a proxy transform (its local +Z is the cut
+  // normal) driven either by the panel controls or, directly in the model, by a
+  // TransformControls handle. A faint quad visualises the cutting plane.
+  private sectionProxy: THREE.Object3D | null = null;
+  private sectionPlaneMesh: THREE.Mesh | null = null;
+  private sectionGizmo: TransformControls | null = null;
+  private sectionGizmoMode: "translate" | "rotate" = "translate";
 
   // Explode state: per top-level part, its base local position + outward dir.
   private exploded = 0;
@@ -194,6 +203,9 @@ export class ViewerController {
   /** Called when a part is double-clicked (after it's framed + selected), so the
    *  UI can open the structure tree and reveal the part there. */
   onDoubleClickPart: ((info: PartInfo | null) => void) | null = null;
+  /** Called on right-click with the part under the cursor (or null) and the
+   *  screen coordinates, so the UI can open a context menu there. */
+  onContextMenu: ((info: PartInfo | null, clientX: number, clientY: number) => void) | null = null;
 
   /** Called each frame after rendering (drives the view cube + label overlays). */
   private frameCallbacks: Array<() => void> = [];
@@ -203,7 +215,7 @@ export class ViewerController {
 
   // Measurement state (design doc §1: results are approximate — mesh, not B-rep).
   private measureEnabled = false;
-  private snapEnabled = false;
+  private snapEnabled = true; // snap to corners/edges/hole-centres on by default
   private measureGroup = new THREE.Group();
   private previewGroup = new THREE.Group();
   private previewMesh: THREE.Mesh | null = null;
@@ -273,6 +285,7 @@ export class ViewerController {
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
     el.addEventListener("dblclick", this.onDoubleClick);
+    el.addEventListener("contextmenu", this.onContextMenuEvent);
 
     // Obsidian resizes leaves without firing window.resize; observe the host.
     this.ro = new ResizeObserver(() => this.onResize());
@@ -311,10 +324,21 @@ export class ViewerController {
     this.flySpeed = Math.max(diag * 0.5, 1e-3);
 
     // Record top-level parts for explode (outward direction from assembly centre).
+    // Many STEP files wrap the whole model in a single root assembly node (and
+    // sometimes several nested single-child wrappers). Exploding those direct
+    // children would just translate the whole model as one block, so descend
+    // through single-child wrapper groups to the first level with real siblings.
     this.explodeParts = [];
     this.exploded = 0;
+    let explodeRoot: THREE.Object3D = group;
+    while (
+      explodeRoot.children.length === 1 &&
+      !(explodeRoot.children[0] as THREE.Mesh).userData?.[MESH_TAG]
+    ) {
+      explodeRoot = explodeRoot.children[0];
+    }
     const center = box.getCenter(new THREE.Vector3());
-    for (const child of group.children) {
+    for (const child of explodeRoot.children) {
       const cbox = new THREE.Box3().setFromObject(child);
       if (cbox.isEmpty()) continue;
       const dir = cbox.getCenter(new THREE.Vector3()).sub(center);
@@ -340,6 +364,27 @@ export class ViewerController {
   /** Frame a specific object (used when a structure-tree node is clicked). */
   focusObject(object: THREE.Object3D): void {
     fitCameraToObject(this.camera, this.controls, object);
+    // In orthographic, fitCameraToObject sizes the frustum *and* the near/far to
+    // the framed object. For a small internal part that leaves the camera inside
+    // the model with near/far spanning only the part, so the rest of the model is
+    // clipped away — it looks like a stray section cut. Parallel projection means
+    // the camera distance doesn't affect framing, so we can safely pull it back
+    // outside the whole model and widen near/far to span it. (Perspective is
+    // unaffected: its tiny near / huge far already avoid this.)
+    if (this.orthographic && this.model) {
+      const box = new THREE.Box3().setFromObject(this.model);
+      if (box.isEmpty()) return;
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      const dir = this.camera.position.clone().sub(this.controls.target);
+      if (dir.lengthSq() < 1e-9) dir.set(1, 0.8, 1);
+      dir.normalize();
+      const dist = sphere.radius * 3 + 1;
+      this.orthoCamera.position.copy(this.controls.target).addScaledVector(dir, dist);
+      this.orthoCamera.near = 0.001;
+      this.orthoCamera.far = (dist + sphere.radius * 2) * 2;
+      this.orthoCamera.updateProjectionMatrix();
+      this.controls.update();
+    }
   }
 
   /**
@@ -449,6 +494,7 @@ export class ViewerController {
 
     this.orthographic = ortho;
     this.rebuildControls(target);
+    if (this.sectionGizmo) this.sectionGizmo.camera = this.camera;
     return this.orthographic;
   }
 
@@ -478,15 +524,35 @@ export class ViewerController {
 
   setSectionEnabled(on: boolean): boolean {
     this.sectionEnabled = on;
-    this.updateSectionPlane();
+    if (on) {
+      this.ensureSectionGizmo();
+      this.updateSectionPlane();
+    }
     this.applySection();
     this.sectionCaps?.setEnabled(on);
+    this.showSectionGizmo(on);
     return this.sectionEnabled;
   }
 
   setSectionAxis(axis: "x" | "y" | "z"): void {
     this.sectionAxis = axis;
     this.updateSectionPlane();
+  }
+
+  /** Switch the in-model handle between move (drag the cut) and tilt (rotate the
+   *  cut plane) — the two rotation arcs, like a CAD viewer's section gizmo. */
+  setSectionGizmoMode(mode: "translate" | "rotate"): void {
+    this.sectionGizmoMode = mode;
+    this.applySectionGizmoMode();
+  }
+
+  getSectionGizmoMode(): "translate" | "rotate" {
+    return this.sectionGizmoMode;
+  }
+
+  toggleSectionGizmoMode(): "translate" | "rotate" {
+    this.setSectionGizmoMode(this.sectionGizmoMode === "translate" ? "rotate" : "translate");
+    return this.sectionGizmoMode;
   }
 
   setSectionPosition(t: number): void {
@@ -509,21 +575,99 @@ export class ViewerController {
     return this.sectionFlip;
   }
 
-  /** Recompute the clip plane from the model's world bounds + slider position. */
+  /**
+   * Position the section proxy from the panel controls (axis + slider + flip),
+   * then derive the clip plane from it. The gizmo shares this proxy, so dragging
+   * the handle and moving the slider are two ways to drive the same cut.
+   */
   private updateSectionPlane(): void {
     if (!this.model) return;
     const box = new THREE.Box3().setFromObject(this.model);
     if (box.isEmpty()) return;
+    this.ensureSectionGizmo();
+    const proxy = this.sectionProxy!;
     const axis = this.sectionAxis;
     const lo = box.min[axis];
     const hi = box.max[axis];
     const pos = lo + (hi - lo) * this.sectionT;
     const n = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
     if (this.sectionFlip) n.negate();
+    const point = box.getCenter(new THREE.Vector3());
+    point[axis] = pos;
+    proxy.position.copy(point);
+    proxy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    proxy.updateMatrixWorld(true);
+    const diag = box.getSize(new THREE.Vector3()).length() || 1;
+    this.sectionPlaneMesh?.scale.set(diag, diag, 1);
+    this.deriveSectionPlaneFromProxy();
+  }
+
+  /** Read the clip plane off the proxy's transform (its local +Z is the normal),
+   *  so both the slider and the in-model gizmo update the same cut. */
+  private deriveSectionPlaneFromProxy(): void {
+    if (!this.model || !this.sectionProxy) return;
+    const n = new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(this.sectionProxy.quaternion)
+      .normalize();
     this.sectionPlane.normal.copy(n);
     // distance(p) = n·p + constant, keeps p where distance ≥ 0.
-    this.sectionPlane.constant = -(n[axis] * pos);
+    this.sectionPlane.constant = -n.dot(this.sectionProxy.position);
+    const box = new THREE.Box3().setFromObject(this.model);
     this.sectionCaps?.update(box.getCenter(new THREE.Vector3()));
+  }
+
+  /** Create the section proxy, its faint plane quad and the drag/tilt gizmo. */
+  private ensureSectionGizmo(): void {
+    if (this.sectionGizmo) return;
+    const proxy = new THREE.Object3D();
+    this.scene.add(proxy);
+    this.sectionProxy = proxy;
+
+    const mat = new THREE.MeshBasicMaterial({
+      color: SECTION_PLANE_COLOR,
+      transparent: true,
+      opacity: 0.12, // barely visible, as requested
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+    mesh.raycast = () => {}; // never intercepts measurement/hover picks
+    mesh.renderOrder = 1;
+    proxy.add(mesh);
+    this.sectionPlaneMesh = mesh;
+
+    const tc = new TransformControls(this.camera, this.renderer.domElement);
+    tc.setSpace("local"); // so the translate arrow points along the cut normal
+    tc.attach(proxy);
+    // Suspend orbiting while dragging the gizmo, and re-derive the cut live.
+    tc.addEventListener("dragging-changed", (event) => {
+      this.controls.enabled = !(event as unknown as { value: boolean }).value;
+    });
+    tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
+    this.scene.add(tc);
+    this.sectionGizmo = tc;
+    this.applySectionGizmoMode();
+    this.showSectionGizmo(this.sectionEnabled);
+  }
+
+  /** Show only the normal arrow (move) or the two tilt arcs (rotate). */
+  private applySectionGizmoMode(): void {
+    const tc = this.sectionGizmo;
+    if (!tc) return;
+    tc.setMode(this.sectionGizmoMode);
+    const rotating = this.sectionGizmoMode === "rotate";
+    tc.showX = rotating; // tilt arc
+    tc.showY = rotating; // tilt arc
+    tc.showZ = !rotating; // move-along-normal arrow
+  }
+
+  private showSectionGizmo(on: boolean): void {
+    if (!this.sectionGizmo || !this.sectionProxy || !this.sectionPlaneMesh) return;
+    this.sectionGizmo.enabled = on;
+    this.sectionGizmo.visible = on;
+    this.sectionPlaneMesh.visible = on;
+    if (on) this.sectionGizmo.attach(this.sectionProxy);
+    else this.sectionGizmo.detach();
   }
 
   /** Apply (or clear) the clip plane on model surfaces + edges only. */
@@ -1212,6 +1356,44 @@ export class ViewerController {
     this.onDoubleClickPart?.(this.describePart(mesh));
   };
 
+  /** Right-click: report the part under the cursor so the UI can pop a menu. */
+  private onContextMenuEvent = (e: MouseEvent): void => {
+    if (!this.onContextMenu) return;
+    if (this.measureEnabled || this.annotateEnabled || this.immersive) return;
+    e.preventDefault();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const mesh =
+      (this.raycaster.intersectObjects(this.visiblePickables(), false)[0]
+        ?.object as THREE.Mesh) ?? null;
+    this.onContextMenu(mesh ? this.describePart(mesh) : null, e.clientX, e.clientY);
+  };
+
+  /** Hide a single object (used by the right-click menu). */
+  hideObject(object: THREE.Object3D): void {
+    object.visible = false;
+  }
+
+  /** Isolate `object`: select it and turn isolate on (hides everything else). */
+  isolateObject(object: THREE.Object3D): void {
+    this.setSelected(object);
+    if (!this.isolated) this.toggleIsolate();
+  }
+
+  /** Reveal every part: clear isolate and unhide all meshes + assembly groups. */
+  showAll(): void {
+    if (this.isolated) this.toggleIsolate(); // restores isolate-hidden parts
+    this.model?.traverse((o) => {
+      if ((o as THREE.Mesh).userData?.[MESH_TAG] || (o as THREE.Group).isGroup) {
+        o.visible = true;
+      }
+    });
+  }
+
   private pickSelect(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -1799,6 +1981,7 @@ export class ViewerController {
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointerleave", this.onPointerLeave);
     el.removeEventListener("dblclick", this.onDoubleClick);
+    el.removeEventListener("contextmenu", this.onContextMenuEvent);
 
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
@@ -1810,6 +1993,22 @@ export class ViewerController {
     this.disposePreview();
     this.sectionCaps?.dispose();
     this.sectionCaps = null;
+
+    if (this.sectionGizmo) {
+      this.sectionGizmo.detach();
+      this.sectionGizmo.dispose();
+      this.scene.remove(this.sectionGizmo);
+      this.sectionGizmo = null;
+    }
+    if (this.sectionPlaneMesh) {
+      this.sectionPlaneMesh.geometry.dispose();
+      (this.sectionPlaneMesh.material as THREE.Material).dispose();
+      this.sectionPlaneMesh = null;
+    }
+    if (this.sectionProxy) {
+      this.scene.remove(this.sectionProxy);
+      this.sectionProxy = null;
+    }
 
     if (this.model) {
       this.scene.remove(this.model);

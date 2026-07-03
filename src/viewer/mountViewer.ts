@@ -1,4 +1,4 @@
-import { Notice, Plugin, setIcon, setTooltip } from "obsidian";
+import { Menu, Notice, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { OcctResult } from "../types";
 import { stepToThree, StepModel, detectUntessellatedMeshes } from "./StepToThree";
@@ -93,6 +93,8 @@ export function mountModel(
 
   const controller = new ViewerController(host);
   controller.setModel(group);
+  // Default to orthographic (parallel) projection — the preferred CAD view.
+  controller.setProjection(true);
 
   // Warn about any parts still rendering as hollow frames (e.g. non-planar
   // faces the reconstruction can't handle, or healing disabled). The reader
@@ -186,6 +188,44 @@ export function mountModel(
     info.update(selectedInfo);
     toolbar.ensureTreeOpen();
     treePanel.reveal(part.object);
+  };
+  // Right-click menu: hide / isolate the clicked part, or show everything again.
+  controller.onContextMenu = (part, clientX, clientY) => {
+    const menu = new Menu();
+    if (part) {
+      menu.addItem((i) =>
+        i
+          .setTitle("Hide this object")
+          .setIcon("eye-off")
+          .onClick(() => {
+            controller.hideObject(part.object);
+            treePanel.syncState();
+          }),
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle("Isolate")
+          .setIcon("focus")
+          .onClick(() => {
+            controller.isolateObject(part.object);
+            selectedInfo = enrich(part);
+            info.update(selectedInfo);
+            treePanel.reveal(part.object);
+            treePanel.syncState();
+          }),
+      );
+      menu.addSeparator();
+    }
+    menu.addItem((i) =>
+      i
+        .setTitle("Show all objects")
+        .setIcon("eye")
+        .onClick(() => {
+          controller.showAll();
+          treePanel.syncState();
+        }),
+    );
+    menu.showAtPosition({ x: clientX, y: clientY });
   };
 
   // Annotations pinned to the model, persisted per file path.
