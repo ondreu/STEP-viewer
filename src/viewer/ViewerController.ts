@@ -327,13 +327,16 @@ export class ViewerController {
       tris: number;
       degen: number; // triangles with ~zero area
       size: string; // physical bbox WxHxD (mm)
+      originDist: string; // distance of bbox centre from world origin (mm)
       side: string;
       sphere: string;
       normBad: number; // NaN/zero-length vertex normals
       groups: number;
     }[] = [];
 
+    let maxAbsCoord = 0;
     const pos = new THREE.Vector3();
+    const center = new THREE.Vector3();
     for (const mesh of this.pickables) {
       const geom = mesh.geometry;
       const index = geom.getIndex();
@@ -360,6 +363,20 @@ export class ViewerController {
             .map((v) => (Number.isFinite(v) ? v.toFixed(0) : "?"))
             .join("×")
         : "?";
+      // occt bakes assembly transforms into vertex coords, so the geometry's
+      // bbox centre IS the part's world position. Far-from-origin coords lose
+      // Float32 precision, which hits large flat panels hardest.
+      let originDist = "?";
+      if (bb) {
+        bb.getCenter(center);
+        originDist = center.length().toFixed(0);
+        maxAbsCoord = Math.max(
+          maxAbsCoord,
+          Math.abs(bb.min.x), Math.abs(bb.max.x),
+          Math.abs(bb.min.y), Math.abs(bb.max.y),
+          Math.abs(bb.min.z), Math.abs(bb.max.z),
+        );
+      }
 
       // Count zero-area (degenerate) triangles — a surface made entirely of
       // these renders nothing while its boundary edges still draw.
@@ -394,6 +411,7 @@ export class ViewerController {
         tris: Math.round(tris),
         degen,
         size,
+        originDist,
         side,
         sphere: sphereOk ? r.toFixed(1) : "NaN",
         normBad,
@@ -404,7 +422,8 @@ export class ViewerController {
     console.info(
       `[STEP Viewer] mesh diagnostics: ${this.pickables.length} meshes | ` +
         `${frontSided} not double-sided | ${nanSphere} NaN sphere | ` +
-        `${withBadNormals} with bad normals | ${withDegenerate} with degenerate triangles.`,
+        `${withBadNormals} with bad normals | ${withDegenerate} with degenerate triangles | ` +
+        `max abs coordinate = ${maxAbsCoord.toFixed(0)} mm.`,
     );
     // Largest by physical size first — the enclosure panels are the big ones.
     rows.sort((a, b) => parseFloat(b.sphere) - parseFloat(a.sphere));
