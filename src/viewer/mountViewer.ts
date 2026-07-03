@@ -2,6 +2,7 @@ import { Notice, Plugin, setIcon, setTooltip } from "obsidian";
 import * as THREE from "three";
 import { OcctResult } from "../types";
 import { stepToThree, StepModel, detectUntessellatedMeshes } from "./StepToThree";
+import { healFrameLikeMeshes } from "./HealFaces";
 import { ViewerController } from "./ViewerController";
 import { createToolbar, iconButton } from "../ui/Toolbar";
 import { createTreePanel } from "../ui/TreePanel";
@@ -29,6 +30,8 @@ export interface MountOptions {
   initialRoll?: number;
   /** Raw STEP file text, used to extract material/metadata for the info card. */
   stepText?: string;
+  /** Reconstruct untessellated planar faces (default true). */
+  healFaces?: boolean;
 }
 
 export interface ViewerHandle {
@@ -73,22 +76,35 @@ export function mountModel(
 ): ViewerHandle {
   const { group, tree } = model;
 
+  // Reconstruct planar faces the STEP reader failed to tessellate, so parts
+  // that would render as hollow "frames" become solid. Only ever touches those
+  // already-broken meshes. Can be turned off in settings.
+  if (opts.healFaces !== false) {
+    const healed = healFrameLikeMeshes(group);
+    if (healed.length > 0) {
+      console.info(
+        `[STEP Viewer] reconstructed ${healed.length} untessellated ` +
+          `surface(s): ${healed.slice(0, 12).join(", ")}` +
+          `${healed.length > 12 ? `, +${healed.length - 12} more` : ""}.`,
+      );
+    }
+  }
+
   const controller = new ViewerController(host);
   controller.setModel(group);
 
-  // Warn if the source file has faces the STEP reader couldn't tessellate:
-  // those parts render as hollow "frames" (see-through) with only their edges.
-  // The reader does no shape healing, so the fix is upstream — re-export the
-  // file through a healing tool (e.g. FreeCAD) or as OBJ/STL.
+  // Warn about any parts still rendering as hollow frames (e.g. non-planar
+  // faces the reconstruction can't handle, or healing disabled). The reader
+  // does no shape healing, so the upstream fix is a re-export through FreeCAD
+  // (or as OBJ/STL, which this plugin reads).
   const untessellated = detectUntessellatedMeshes(group);
   if (untessellated.length > 0) {
     const list = untessellated.slice(0, 8).join(", ");
     const more = untessellated.length > 8 ? `, +${untessellated.length - 8} more` : "";
     console.warn(
-      `[STEP Viewer] ${untessellated.length} surface(s) failed to tessellate ` +
-        `(malformed faces in the source file) and render as hollow frames: ` +
-        `${list}${more}. Re-export the file through a healing tool (e.g. FreeCAD) ` +
-        `or as OBJ/STL to fix this.`,
+      `[STEP Viewer] ${untessellated.length} surface(s) could not be rendered ` +
+        `(malformed faces the reader couldn't tessellate): ${list}${more}. ` +
+        `Re-export the file through a healing tool (e.g. FreeCAD) or as OBJ/STL.`,
     );
     new Notice(
       `STEP Viewer: ${untessellated.length} surface(s) couldn't be rendered — ` +

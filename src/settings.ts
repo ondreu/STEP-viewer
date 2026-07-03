@@ -16,6 +16,12 @@ export interface StepViewerSettings {
   cacheEnabled: boolean;
   /** Cache size cap in MB (LRU-evicted). */
   cacheMaxMB: number;
+  /**
+   * Reconstruct planar faces the STEP reader failed to tessellate (parts that
+   * would otherwise render as hollow, see-through "frames"). Only touches those
+   * already-broken meshes; well-formed geometry is never modified.
+   */
+  healFaces: boolean;
 }
 
 export const DEFAULT_SETTINGS: StepViewerSettings = {
@@ -23,6 +29,7 @@ export const DEFAULT_SETTINGS: StepViewerSettings = {
   tiers: tiersForProfile(DEFAULT_PROFILE),
   cacheEnabled: true,
   cacheMaxMB: 500,
+  healFaces: true,
 };
 
 /**

@@ -135,6 +135,7 @@ export class StepEmbed extends MarkdownRenderChild {
             showAnnotations: this.opts.showAnnotations,
             initialView: this.opts.view,
             initialRoll: this.opts.roll,
+            healFaces: settings.healFaces,
           });
           return;
         }
@@ -181,6 +182,7 @@ export class StepEmbed extends MarkdownRenderChild {
         initialView: this.opts.view,
         initialRoll: this.opts.roll,
         stepText,
+        healFaces: settings.healFaces,
       });
     } catch (err) {
       console.error("[STEP Viewer] Embed failed", this.linktext, err);

@@ -186,6 +186,23 @@ class StepViewerSettingTab extends PluginSettingTab {
         }),
     );
 
+    // --- Rendering ---------------------------------------------------------
+    new Setting(containerEl).setName("Rendering").setHeading();
+    new Setting(containerEl)
+      .setName("Reconstruct missing faces")
+      .setDesc(
+        "Some STEP files describe planar faces the reader can't tessellate, so " +
+          "those parts render as hollow, see-through “frames”. When on, the " +
+          "plugin rebuilds those flat faces (holes preserved) so the parts show " +
+          "solid. Only affects already-broken parts. Reopen a model to apply.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.healFaces).onChange(async (v) => {
+          this.plugin.stepSettings.healFaces = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
     // --- Cache -------------------------------------------------------------
     new Setting(containerEl).setName("Cache").setHeading();
     containerEl.createEl("p", {

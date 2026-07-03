@@ -167,12 +167,18 @@ vice versa.
 
 **Some surfaces render as hollow "frames" (you can see through them).** A few
 STEP files describe faces the geometry kernel can't tessellate — the surface
-comes back with no interior triangles, so it renders as just its outline. The
-STEP reader used here (`occt-import-js`) does no shape healing, so the fix is
-upstream: re-export the file through a healing tool. Opening the file in
-**FreeCAD** and exporting it again (as STEP, or as `.obj` / `.stl`, which this
-plugin now reads) rebuilds the faces cleanly. The plugin shows a notice listing
-the affected parts when this is detected.
+comes back with no interior triangles, so it renders as just its outline (the
+reader, `occt-import-js`, does no shape healing).
+
+The plugin **reconstructs these planar faces automatically**: it caps the open
+boundary loops of the affected parts, preserving holes and cutouts, so they
+render solid. This is on by default (Settings → *Reconstruct missing faces*)
+and only ever touches parts that are otherwise invisible.
+
+Reconstruction handles flat faces. For anything it can't rebuild (curved faces),
+the plugin shows a notice listing the parts; re-export the file through a
+healing tool — opening it in **FreeCAD** and exporting again (as STEP, or as
+`.obj` / `.stl`, which this plugin reads) rebuilds all faces cleanly.
 
 ## Development
 

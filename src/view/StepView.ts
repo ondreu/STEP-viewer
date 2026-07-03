@@ -113,6 +113,7 @@ export class StepView extends FileView {
         this.viewer = mountModel(host, model, {
           plugin: this.plugin,
           filePath: file.path,
+          healFaces: settings.healFaces,
         });
         return;
       }
@@ -127,6 +128,7 @@ export class StepView extends FileView {
           this.viewer = mountViewer(host, cached, {
             plugin: this.plugin,
             filePath: file.path,
+            healFaces: settings.healFaces,
           });
           return;
         }
@@ -165,6 +167,7 @@ export class StepView extends FileView {
         plugin: this.plugin,
         filePath: file.path,
         stepText,
+        healFaces: settings.healFaces,
       });
     } catch (err) {
       if (token !== this.loadToken) return;
