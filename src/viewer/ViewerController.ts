@@ -142,6 +142,23 @@ export class ViewerController {
   private pickables: THREE.Mesh[] = [];
   private raycaster = new THREE.Raycaster();
 
+  /**
+   * Pickables that are actually visible on screen. Three.js raycasting ignores
+   * `.visible`, so a mesh hidden via the structure tree would still intercept
+   * clicks and hover — including any part sitting behind it. We must exclude a
+   * mesh whose own or any ancestor's `.visible` is false before intersecting.
+   */
+  private visiblePickables(): THREE.Mesh[] {
+    return this.pickables.filter((mesh) => {
+      let o: THREE.Object3D | null = mesh;
+      while (o) {
+        if (!o.visible) return false;
+        o = o.parent;
+      }
+      return true;
+    });
+  }
+
   // Hover highlight + part info. The highlight is a translucent overlay mesh
   // (sharing the hovered geometry) so it reads on any base colour — an emissive
   // tint is swamped on light/already-bright materials.
@@ -893,7 +910,7 @@ export class ViewerController {
 
   private processHover(): void {
     this.raycaster.setFromCamera(this.pointerNdc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.pickables, false);
+    const hits = this.raycaster.intersectObjects(this.visiblePickables(), false);
     this.setHover((hits[0]?.object as THREE.Mesh) ?? null);
   }
 
@@ -996,7 +1013,7 @@ export class ViewerController {
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = this.raycaster.intersectObjects(this.pickables, false)[0];
+    const hit = this.raycaster.intersectObjects(this.visiblePickables(), false)[0];
     const mesh = (hit?.object as THREE.Mesh) ?? null;
     this.setSelected(mesh);
     this.onSelectPart?.(mesh ? this.describePart(mesh) : null);
@@ -1146,7 +1163,7 @@ export class ViewerController {
     this.raycaster.set(p.clone().addScaledVector(inward, eps), inward);
     this.raycaster.far = this.modelDiag * 2;
     const hits = this.raycaster
-      .intersectObjects(this.pickables, false)
+      .intersectObjects(this.visiblePickables(), false)
       .filter((h) => h.distance > eps * 2);
     this.raycaster.far = Infinity; // restore for hover/pick raycasting
     if (hits.length === 0) {
@@ -1205,7 +1222,7 @@ export class ViewerController {
     normal: THREE.Vector3 | null;
   } | null {
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.pickables, false);
+    const hits = this.raycaster.intersectObjects(this.visiblePickables(), false);
     if (hits.length === 0) return null;
     const hit = hits[0];
     const object = hit.object;
