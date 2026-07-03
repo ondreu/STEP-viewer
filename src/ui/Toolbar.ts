@@ -34,11 +34,17 @@ const MEASURE_MODES: { mode: MeasureMode; glyph: string; tip: string }[] = [
  * state; a shared `sync()` re-reads the controller after every click so
  * mutually exclusive modes stay consistent.
  */
+export interface ToolbarHandle {
+  el: HTMLElement;
+  /** Open the structure tree if it isn't already, keeping the button in sync. */
+  ensureTreeOpen: () => void;
+}
+
 export function createToolbar(
   host: HTMLElement,
   controller: ViewerController,
   opts: ToolbarOptions,
-): HTMLElement {
+): ToolbarHandle {
   let treeOpen = opts.treeInitiallyOpen;
   let annotsOpen = opts.annotationsInitiallyOpen;
   let sectionOpen = false;
@@ -144,7 +150,14 @@ export function createToolbar(
   }
   sync();
 
-  return g1;
+  return {
+    el: g1,
+    ensureTreeOpen: () => {
+      if (treeOpen) return;
+      treeOpen = opts.onToggleTree();
+      sync();
+    },
+  };
 }
 
 /** A toolbar group rendered as its own card in the rail. */

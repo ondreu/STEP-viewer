@@ -172,6 +172,9 @@ export class ViewerController {
   onHover: ((info: PartInfo | null) => void) | null = null;
   /** Called when a part is clicked (selected), or null when clicking empty space. */
   onSelectPart: ((info: PartInfo | null) => void) | null = null;
+  /** Called when a part is double-clicked (after it's framed + selected), so the
+   *  UI can open the structure tree and reveal the part there. */
+  onDoubleClickPart: ((info: PartInfo | null) => void) | null = null;
 
   /** Called each frame after rendering (drives the view cube + label overlays). */
   private frameCallbacks: Array<() => void> = [];
@@ -250,6 +253,7 @@ export class ViewerController {
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
+    el.addEventListener("dblclick", this.onDoubleClick);
 
     // Obsidian resizes leaves without firing window.resize; observe the host.
     this.ro = new ResizeObserver(() => this.onResize());
@@ -547,17 +551,20 @@ export class ViewerController {
       object.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.userData?.[MESH_TAG]) return;
+        // depthTest:false lets the selection highlight glow *through* any parts
+        // in front of it, so a selected part stays visible even when occluded.
         const mat = new THREE.MeshBasicMaterial({
           color: SELECT_COLOR,
           transparent: true,
-          opacity: 0.4,
+          opacity: 0.45,
           depthWrite: false,
+          depthTest: false,
           polygonOffset: true,
           polygonOffsetFactor: -1,
           polygonOffsetUnits: -1,
         });
         const overlay = new THREE.Mesh(mesh.geometry, mat);
-        overlay.renderOrder = 2;
+        overlay.renderOrder = 4; // draw last, over both geometry and hover
         overlay.raycast = () => {};
         mesh.add(overlay);
         this.selectOverlays.push(overlay);
@@ -622,6 +629,10 @@ export class ViewerController {
     for (const o of this.isolateHidden) o.visible = true;
     this.isolateHidden = [];
     const active = this.isolated && this.selected ? this.selected : null;
+    // While a part is isolated its (blue) selection highlight is redundant —
+    // nothing else is shown to distinguish it from — so hide the overlays and
+    // restore them when isolate turns off.
+    for (const overlay of this.selectOverlays) overlay.visible = !active;
     // Let the annotation/measurement layers hide anchors outside the kept part.
     this.onIsolateChange?.(active);
     if (!active || !this.model) return;
@@ -1069,6 +1080,28 @@ export class ViewerController {
     else this.pickSelect(e);
   };
 
+  /**
+   * Double-clicking a part frames it in the view (focus) and selects it, then
+   * lets the UI reveal it in the structure tree (opening the tree if needed).
+   * Ignored while measuring/annotating so it doesn't fight those modes.
+   */
+  private onDoubleClick = (e: MouseEvent): void => {
+    if (this.measureEnabled || this.annotateEnabled) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const mesh =
+      (this.raycaster.intersectObjects(this.visiblePickables(), false)[0]
+        ?.object as THREE.Mesh) ?? null;
+    if (!mesh) return;
+    this.setSelected(mesh);
+    this.focusObject(mesh);
+    this.onDoubleClickPart?.(this.describePart(mesh));
+  };
+
   private pickSelect(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -1310,6 +1343,64 @@ export class ViewerController {
   }
 
   /**
+   * Circular edge loops (hole rims / round bosses) of `mesh`, in mesh-local
+   * space, detected once from the feature-edge geometry and cached. Local space
+   * so the cache survives model rolls (we transform to world at snap time).
+   */
+  private meshCircles(mesh: THREE.Mesh): CircleFeature[] {
+    const cached = mesh.userData.__stepCircles as CircleFeature[] | undefined;
+    if (cached) return cached;
+    const edges = mesh.children.find((c) => c.userData?.[EDGES_TAG]) as
+      | THREE.LineSegments
+      | undefined;
+    const pos = edges?.geometry.getAttribute("position") as
+      | THREE.BufferAttribute
+      | undefined;
+    const circles = pos ? detectCircles(pos) : [];
+    mesh.userData.__stepCircles = circles;
+    return circles;
+  }
+
+  /**
+   * If `p` (world) lies on or near a circular edge of `mesh`, return that
+   * circle's centre in world space. Used so measurement/annotation snap can grab
+   * a hole's centre — you click the round edge and it jumps to the middle.
+   */
+  private snapHoleCenter(mesh: THREE.Mesh, p: THREE.Vector3): THREE.Vector3 | null {
+    const circles = this.meshCircles(mesh);
+    if (circles.length === 0) return null;
+
+    mesh.updateWorldMatrix(true, false);
+    const mw = mesh.matrixWorld;
+    const scale = mesh.getWorldScale(_tmpS).x || 1;
+
+    const cw = new THREE.Vector3();
+    const nw = new THREE.Vector3();
+    const proj = new THREE.Vector3();
+    const plane = new THREE.Plane();
+    let best: THREE.Vector3 | null = null;
+    let bestScore = Infinity;
+
+    for (const c of circles) {
+      cw.copy(c.center).applyMatrix4(mw);
+      nw.copy(c.normal).transformDirection(mw).normalize();
+      const r = c.radius * scale;
+      plane.setFromNormalAndCoplanarPoint(nw, cw);
+      const planeDist = Math.abs(plane.distanceToPoint(p));
+      if (planeDist > this.snapThreshold) continue;
+      plane.projectPoint(p, proj);
+      const ring = Math.abs(proj.distanceTo(cw) - r); // distance to the rim
+      if (ring > this.snapThreshold) continue;
+      const score = planeDist + ring;
+      if (score < bestScore) {
+        bestScore = score;
+        best = cw.clone();
+      }
+    }
+    return best;
+  }
+
+  /**
    * Snap `p` to the nearest visible corner or edge of `mesh`, using the
    * feature-edge geometry we already build for display. Corners win over edges
    * when both are within threshold. Returns null if nothing is close enough.
@@ -1322,6 +1413,11 @@ export class ViewerController {
       | THREE.BufferAttribute
       | undefined;
     if (!pos) return null;
+
+    // A hole's centre wins over its rim corners/edges: clicking a circular edge
+    // snaps to the circle's centre (design ask: snap to hole centres too).
+    const holeCenter = this.snapHoleCenter(mesh, p);
+    if (holeCenter) return holeCenter;
 
     mesh.updateWorldMatrix(true, false);
     const mw = mesh.matrixWorld;
@@ -1580,6 +1676,7 @@ export class ViewerController {
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointerleave", this.onPointerLeave);
+    el.removeEventListener("dblclick", this.onDoubleClick);
 
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
@@ -1614,6 +1711,122 @@ export class ViewerController {
     });
     g.parent?.remove(g);
   }
+}
+
+/** A circular edge loop (hole rim / round boss), in the mesh's local space. */
+interface CircleFeature {
+  center: THREE.Vector3;
+  radius: number;
+  normal: THREE.Vector3;
+}
+
+/**
+ * Detect circular edge loops in a LineSegments position buffer (the feature
+ * edges we already build for display). A hole's rim comes back as a closed
+ * chain of short segments whose vertices are co-planar and equidistant from a
+ * centre — we weld endpoints, split into connected components where every
+ * vertex has degree 2 (simple cycles), then keep the ones that fit a circle.
+ */
+function detectCircles(pos: THREE.BufferAttribute): CircleFeature[] {
+  // Weld coincident endpoints so the rim reads as one connected loop.
+  const map = new Map<string, number>();
+  const verts: THREE.Vector3[] = [];
+  const v = new THREE.Vector3();
+  const idxOf = (i: number): number => {
+    v.fromBufferAttribute(pos, i);
+    const k = `${Math.round(v.x * 1e4)},${Math.round(v.y * 1e4)},${Math.round(v.z * 1e4)}`;
+    let j = map.get(k);
+    if (j === undefined) {
+      j = verts.length;
+      verts.push(v.clone());
+      map.set(k, j);
+    }
+    return j;
+  };
+  const adj = new Map<number, number[]>();
+  const link = (a: number, b: number): void => {
+    if (a === b) return;
+    (adj.get(a) ?? adj.set(a, []).get(a)!).push(b);
+    (adj.get(b) ?? adj.set(b, []).get(b)!).push(a);
+  };
+  for (let i = 0; i + 1 < pos.count; i += 2) link(idxOf(i), idxOf(i + 1));
+
+  const circles: CircleFeature[] = [];
+  const seen = new Set<number>();
+  for (const start of adj.keys()) {
+    if (seen.has(start)) continue;
+    // Gather the connected component; a clean loop has every vertex degree 2.
+    const comp: number[] = [];
+    const stack = [start];
+    seen.add(start);
+    let simpleCycle = true;
+    while (stack.length) {
+      const u = stack.pop()!;
+      comp.push(u);
+      const ns = adj.get(u)!;
+      if (ns.length !== 2) simpleCycle = false;
+      for (const w of ns) if (!seen.has(w)) { seen.add(w); stack.push(w); }
+    }
+    if (!simpleCycle || comp.length < 8) continue; // need a real ring
+
+    const circle = fitCircle(verts, adj, start, comp.length);
+    if (circle) circles.push(circle);
+  }
+  return circles;
+}
+
+/**
+ * Walk the degree-2 loop starting at `start` and, if it closes cleanly, fit a
+ * circle to it: near-constant radius from the centroid and near-planar. Returns
+ * null when the loop isn't circular (a rectangle, an irregular contour, …).
+ */
+function fitCircle(
+  verts: THREE.Vector3[],
+  adj: Map<number, number[]>,
+  start: number,
+  size: number,
+): CircleFeature | null {
+  // Order the loop by walking the adjacency (each vertex has exactly 2 links).
+  const order: number[] = [];
+  let prev = -1;
+  let cur = start;
+  for (let i = 0; i < size; i++) {
+    order.push(cur);
+    const ns = adj.get(cur)!;
+    const nxt = ns[0] === prev ? ns[1] : ns[0];
+    prev = cur;
+    cur = nxt;
+  }
+  if (cur !== start) return null; // didn't return to the start → not one cycle
+
+  const center = new THREE.Vector3();
+  for (const i of order) center.add(verts[i]);
+  center.divideScalar(order.length);
+
+  // Newell's method for the loop's plane normal.
+  const normal = new THREE.Vector3();
+  for (let i = 0; i < order.length; i++) {
+    const a = verts[order[i]];
+    const b = verts[order[(i + 1) % order.length]];
+    normal.x += (a.y - b.y) * (a.z + b.z);
+    normal.y += (a.z - b.z) * (a.x + b.x);
+    normal.z += (a.x - b.x) * (a.y + b.y);
+  }
+  if (normal.lengthSq() < 1e-12) return null;
+  normal.normalize();
+
+  // Mean radius, then reject if the radius varies too much (not round) or if
+  // any vertex sits well off the plane (not planar).
+  let rSum = 0;
+  for (const i of order) rSum += verts[i].distanceTo(center);
+  const r = rSum / order.length;
+  if (r < 1e-4) return null;
+  for (const i of order) {
+    const d = verts[i].distanceTo(center);
+    if (Math.abs(d - r) > 0.15 * r) return null; // radius spread > 15%
+    if (Math.abs(verts[i].clone().sub(center).dot(normal)) > 0.05 * r) return null;
+  }
+  return { center, radius: r, normal };
 }
 
 /** Format a millimeter distance, switching to metres for large values. */

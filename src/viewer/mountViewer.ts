@@ -177,6 +177,15 @@ export function mountModel(
     info.update(selectedInfo);
     treePanel.reveal(part?.object ?? null);
   };
+  // Double-clicking a part frames it (done in the controller) and, here, opens
+  // the structure tree and reveals the part in it.
+  controller.onDoubleClickPart = (part) => {
+    if (!part) return;
+    selectedInfo = enrich(part);
+    info.update(selectedInfo);
+    toolbar.ensureTreeOpen();
+    treePanel.reveal(part.object);
+  };
 
   // Annotations pinned to the model, persisted per file path.
   const annotations = new AnnotationLayer(
@@ -268,7 +277,7 @@ export function mountModel(
   iconButton(roll, "rotate-ccw", "Rotate view 90° left", () => controller.rollView(-1));
   iconButton(roll, "rotate-cw", "Rotate view 90° right", () => controller.rollView(1));
 
-  createToolbar(rail, controller, {
+  const toolbar = createToolbar(rail, controller, {
     treeInitiallyOpen: false,
     onToggleTree: () => {
       const open = !treePanel.el.isShown();

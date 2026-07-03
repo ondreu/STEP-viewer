@@ -226,7 +226,12 @@ function renderNode(
     cls: "step-viewer-tree-label",
     text: node.name,
   });
+  // Single click selects + highlights the part; double click frames it in the
+  // view (matching double-click-to-focus on the model itself).
   label.addEventListener("click", () => {
+    controller.setSelected(node.object);
+  });
+  label.addEventListener("dblclick", () => {
     controller.setSelected(node.object);
     controller.focusObject(node.object);
   });
