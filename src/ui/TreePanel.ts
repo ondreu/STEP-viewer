@@ -8,6 +8,9 @@ export interface TreePanelHandle {
   el: HTMLElement;
   /** Highlight + scroll to the row for `object`, expanding ancestors. */
   reveal(object: THREE.Object3D | null): void;
+  /** Re-read visibility + isolate state into the checkboxes and buttons (e.g.
+   *  after the right-click menu hides/isolates/shows parts). */
+  syncState(): void;
 }
 
 export interface TreePanelOptions {
@@ -125,6 +128,14 @@ export function createTreePanel(
       entry.row.addClass("is-active");
       entry.row.scrollIntoView({ block: "nearest" });
       current = entry.row;
+    },
+    syncState() {
+      for (const e of entries) e.checkbox.checked = e.node.object.visible;
+      allVisible = entries.every((e) => e.node.object.visible);
+      setIcon(eyeBtn, allVisible ? "eye" : "eye-off");
+      setTooltip(eyeBtn, allVisible ? "Hide all parts" : "Show all parts");
+      eyeBtn.toggleClass("is-active", !allVisible);
+      isolateBtn.toggleClass("is-active", controller.isIsolated());
     },
   };
 }

@@ -194,6 +194,9 @@ export class ViewerController {
   /** Called when a part is double-clicked (after it's framed + selected), so the
    *  UI can open the structure tree and reveal the part there. */
   onDoubleClickPart: ((info: PartInfo | null) => void) | null = null;
+  /** Called on right-click with the part under the cursor (or null) and the
+   *  screen coordinates, so the UI can open a context menu there. */
+  onContextMenu: ((info: PartInfo | null, clientX: number, clientY: number) => void) | null = null;
 
   /** Called each frame after rendering (drives the view cube + label overlays). */
   private frameCallbacks: Array<() => void> = [];
@@ -203,7 +206,7 @@ export class ViewerController {
 
   // Measurement state (design doc §1: results are approximate — mesh, not B-rep).
   private measureEnabled = false;
-  private snapEnabled = false;
+  private snapEnabled = true; // snap to corners/edges/hole-centres on by default
   private measureGroup = new THREE.Group();
   private previewGroup = new THREE.Group();
   private previewMesh: THREE.Mesh | null = null;
@@ -273,6 +276,7 @@ export class ViewerController {
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerLeave);
     el.addEventListener("dblclick", this.onDoubleClick);
+    el.addEventListener("contextmenu", this.onContextMenuEvent);
 
     // Obsidian resizes leaves without firing window.resize; observe the host.
     this.ro = new ResizeObserver(() => this.onResize());
@@ -311,10 +315,21 @@ export class ViewerController {
     this.flySpeed = Math.max(diag * 0.5, 1e-3);
 
     // Record top-level parts for explode (outward direction from assembly centre).
+    // Many STEP files wrap the whole model in a single root assembly node (and
+    // sometimes several nested single-child wrappers). Exploding those direct
+    // children would just translate the whole model as one block, so descend
+    // through single-child wrapper groups to the first level with real siblings.
     this.explodeParts = [];
     this.exploded = 0;
+    let explodeRoot: THREE.Object3D = group;
+    while (
+      explodeRoot.children.length === 1 &&
+      !(explodeRoot.children[0] as THREE.Mesh).userData?.[MESH_TAG]
+    ) {
+      explodeRoot = explodeRoot.children[0];
+    }
     const center = box.getCenter(new THREE.Vector3());
-    for (const child of group.children) {
+    for (const child of explodeRoot.children) {
       const cbox = new THREE.Box3().setFromObject(child);
       if (cbox.isEmpty()) continue;
       const dir = cbox.getCenter(new THREE.Vector3()).sub(center);
@@ -340,6 +355,27 @@ export class ViewerController {
   /** Frame a specific object (used when a structure-tree node is clicked). */
   focusObject(object: THREE.Object3D): void {
     fitCameraToObject(this.camera, this.controls, object);
+    // In orthographic, fitCameraToObject sizes the frustum *and* the near/far to
+    // the framed object. For a small internal part that leaves the camera inside
+    // the model with near/far spanning only the part, so the rest of the model is
+    // clipped away — it looks like a stray section cut. Parallel projection means
+    // the camera distance doesn't affect framing, so we can safely pull it back
+    // outside the whole model and widen near/far to span it. (Perspective is
+    // unaffected: its tiny near / huge far already avoid this.)
+    if (this.orthographic && this.model) {
+      const box = new THREE.Box3().setFromObject(this.model);
+      if (box.isEmpty()) return;
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      const dir = this.camera.position.clone().sub(this.controls.target);
+      if (dir.lengthSq() < 1e-9) dir.set(1, 0.8, 1);
+      dir.normalize();
+      const dist = sphere.radius * 3 + 1;
+      this.orthoCamera.position.copy(this.controls.target).addScaledVector(dir, dist);
+      this.orthoCamera.near = 0.001;
+      this.orthoCamera.far = (dist + sphere.radius * 2) * 2;
+      this.orthoCamera.updateProjectionMatrix();
+      this.controls.update();
+    }
   }
 
   /**
@@ -1212,6 +1248,44 @@ export class ViewerController {
     this.onDoubleClickPart?.(this.describePart(mesh));
   };
 
+  /** Right-click: report the part under the cursor so the UI can pop a menu. */
+  private onContextMenuEvent = (e: MouseEvent): void => {
+    if (!this.onContextMenu) return;
+    if (this.measureEnabled || this.annotateEnabled || this.immersive) return;
+    e.preventDefault();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const mesh =
+      (this.raycaster.intersectObjects(this.visiblePickables(), false)[0]
+        ?.object as THREE.Mesh) ?? null;
+    this.onContextMenu(mesh ? this.describePart(mesh) : null, e.clientX, e.clientY);
+  };
+
+  /** Hide a single object (used by the right-click menu). */
+  hideObject(object: THREE.Object3D): void {
+    object.visible = false;
+  }
+
+  /** Isolate `object`: select it and turn isolate on (hides everything else). */
+  isolateObject(object: THREE.Object3D): void {
+    this.setSelected(object);
+    if (!this.isolated) this.toggleIsolate();
+  }
+
+  /** Reveal every part: clear isolate and unhide all meshes + assembly groups. */
+  showAll(): void {
+    if (this.isolated) this.toggleIsolate(); // restores isolate-hidden parts
+    this.model?.traverse((o) => {
+      if ((o as THREE.Mesh).userData?.[MESH_TAG] || (o as THREE.Group).isGroup) {
+        o.visible = true;
+      }
+    });
+  }
+
   private pickSelect(e: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -1799,6 +1873,7 @@ export class ViewerController {
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointerleave", this.onPointerLeave);
     el.removeEventListener("dblclick", this.onDoubleClick);
+    el.removeEventListener("contextmenu", this.onContextMenuEvent);
 
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
