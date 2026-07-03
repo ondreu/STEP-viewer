@@ -241,6 +241,7 @@ export function mountViewer(
       return open;
     },
     onScreenshot: () => void takeScreenshot(host, controller, labelLayer, opts),
+    onExportObj: () => void exportObjToVault(controller, opts),
   });
 
   // Per-frame overlays: keep the cube oriented and the labels positioned.
@@ -272,6 +273,36 @@ export function mountViewer(
  * Capture the current view as a PNG (WebGL buffer + projected label captions),
  * save it next to the model, and copy an embed link to the clipboard.
  */
+/**
+ * Export the selected part (or the whole model if nothing is selected) as a
+ * Wavefront OBJ next to the model file. Mesh-only, not STEP/BREP.
+ */
+async function exportObjToVault(
+  controller: ViewerController,
+  opts: MountOptions,
+): Promise<void> {
+  try {
+    const selected = controller.getSelected();
+    const obj = controller.exportObj(selected);
+    if (!obj) {
+      new Notice("Nothing to export — no meshes found.");
+      return;
+    }
+    const app = opts.plugin.app;
+    const slash = opts.filePath.lastIndexOf("/");
+    const folder = slash >= 0 ? opts.filePath.slice(0, slash) : "";
+    const base = opts.filePath.slice(slash + 1).replace(/\.[^.]+$/, "");
+    const partName = (selected?.name || "model").replace(/[^\w.-]+/g, "_");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const outPath = `${folder ? folder + "/" : ""}${base}-${partName}-${stamp}.obj`;
+    await app.vault.create(outPath, obj);
+    new Notice(`Exported ${outPath}`);
+  } catch (err) {
+    console.error("[STEP Viewer] OBJ export failed", err);
+    new Notice("OBJ export failed — see console.");
+  }
+}
+
 async function takeScreenshot(
   host: HTMLElement,
   controller: ViewerController,

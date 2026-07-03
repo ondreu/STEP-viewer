@@ -780,6 +780,69 @@ export class ViewerController {
     return this.renderer.domElement.toDataURL("image/png");
   }
 
+  // --- Mesh export ---------------------------------------------------------
+
+  /**
+   * Serialize the meshes under `root` (or the selected part, or the whole model)
+   * to Wavefront OBJ in world coordinates. This exports the exact tessellated
+   * geometry the viewer holds — useful for isolating a single part and for
+   * diagnostics. It is a mesh export, not STEP/BREP (the parser is read-only).
+   * Returns null if there is nothing to export.
+   */
+  exportObj(root?: THREE.Object3D | null): string | null {
+    const target = root ?? this.selected ?? this.model;
+    if (!target) return null;
+
+    const lines: string[] = ["# STEP Viewer OBJ export"];
+    let vOffset = 0;
+    let exported = 0;
+    const p = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const normalMat = new THREE.Matrix3();
+
+    target.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.userData?.[MESH_TAG] || !mesh.geometry) return;
+      const geom = mesh.geometry;
+      const position = geom.getAttribute("position");
+      const normal = geom.getAttribute("normal");
+      const index = geom.getIndex();
+      if (!position) return;
+
+      mesh.updateWorldMatrix(true, false);
+      normalMat.getNormalMatrix(mesh.matrixWorld);
+
+      lines.push(`o ${(mesh.name || "part").replace(/\s+/g, "_")}_${exported}`);
+      for (let i = 0; i < position.count; i++) {
+        p.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        lines.push(`v ${p.x} ${p.y} ${p.z}`);
+      }
+      if (normal) {
+        for (let i = 0; i < normal.count; i++) {
+          n.fromBufferAttribute(normal, i).applyMatrix3(normalMat).normalize();
+          lines.push(`vn ${n.x} ${n.y} ${n.z}`);
+        }
+      }
+      const emitFace = (a: number, b: number, c: number): void => {
+        const A = vOffset + a + 1, B = vOffset + b + 1, C = vOffset + c + 1;
+        lines.push(
+          normal ? `f ${A}//${A} ${B}//${B} ${C}//${C}` : `f ${A} ${B} ${C}`,
+        );
+      };
+      if (index) {
+        for (let t = 0; t < index.count; t += 3) {
+          emitFace(index.getX(t), index.getX(t + 1), index.getX(t + 2));
+        }
+      } else {
+        for (let i = 0; i < position.count; i += 3) emitFace(i, i + 1, i + 2);
+      }
+      vOffset += position.count;
+      exported++;
+    });
+
+    return exported > 0 ? lines.join("\n") : null;
+  }
+
   /** Register a resource to dispose when this controller is disposed. */
   registerDisposable(d: { dispose(): void }): void {
     this.disposables.push(d);

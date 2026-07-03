@@ -14,6 +14,8 @@ export interface ToolbarOptions {
   onToggleExplode: () => boolean;
   /** Capture a PNG screenshot of the current view. */
   onScreenshot: () => void;
+  /** Export the selected part (or whole model) as an OBJ mesh file. */
+  onExportObj: () => void;
 }
 
 const MEASURE_MODES: { mode: MeasureMode; glyph: string; tip: string }[] = [
@@ -90,6 +92,9 @@ export function createToolbar(
 
   const g5 = card(host);
   iconButton(g5, "camera", "Screenshot to PNG", () => opts.onScreenshot());
+  iconButton(g5, "download", "Export selected part (or whole model) as OBJ", () =>
+    opts.onExportObj(),
+  );
   const annots = iconButton(g5, "messages-square", "Toggle annotations list", () => {
     annotsOpen = opts.onToggleAnnotations();
     sync();
