@@ -259,7 +259,7 @@ export class ViewerController {
   private pointerDownY = 0;
 
   constructor(private host: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer = createRenderer();
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.domElement.classList.add("step-viewer-canvas");
     host.appendChild(this.renderer.domElement);
@@ -679,29 +679,16 @@ export class ViewerController {
     this.showSectionGizmo(this.sectionEnabled);
   }
 
-  /** The translucent cut-surface quad (+ outline) parented to the proxy. Built
+  /** The cut-plane marker parented to the proxy: just an outline (no fill), so
+   *  it shows where the cut is without veiling the view into the model. Built
    *  from a unit plane; the group is scaled to the model in `resizeSectionVis`. */
   private buildSectionPlaneVis(): THREE.Object3D {
     const group = new THREE.Group();
     group.raycast = () => {};
 
-    const fill = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({
-        color: SECTION_PLANE_COLOR,
-        transparent: true,
-        opacity: 0.12,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    );
-    fill.renderOrder = 3;
-    fill.raycast = () => {};
-    group.add(fill);
-
     const border = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
-      new THREE.LineBasicMaterial({ color: SECTION_PLANE_COLOR, transparent: true, opacity: 0.9 }),
+      new THREE.LineBasicMaterial({ color: SECTION_PLANE_COLOR, transparent: true, opacity: 0.8 }),
     );
     border.renderOrder = 4;
     border.raycast = () => {};
@@ -2261,6 +2248,34 @@ function num(mm: number): string {
 
 function mid(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
   return a.clone().add(b).multiplyScalar(0.5);
+}
+
+/**
+ * Create the WebGL renderer, guaranteeing a working stencil buffer. The section
+ * hatch cap masks the cut cross-section with the stencil buffer (SectionCaps);
+ * without one the mask always passes and the hatch floods the whole cut plane
+ * instead of just the cut solids. Some GPUs/drivers don't provide stencil
+ * alongside MSAA on the default framebuffer, so if antialiasing left us without
+ * stencil bits we drop antialiasing (kept sharp by the device pixel ratio) to
+ * get stencil back — correct sectioning matters more than edge smoothing.
+ */
+function createRenderer(): THREE.WebGLRenderer {
+  const make = (antialias: boolean): THREE.WebGLRenderer =>
+    new THREE.WebGLRenderer({ antialias, alpha: true, stencil: true });
+  let renderer = make(true);
+  let bits = 0;
+  try {
+    const gl = renderer.getContext();
+    bits = gl.getParameter(gl.STENCIL_BITS) as number;
+  } catch {
+    bits = 0;
+  }
+  if (!bits) {
+    renderer.dispose();
+    renderer.forceContextLoss();
+    renderer = make(false);
+  }
+  return renderer;
 }
 
 /**
