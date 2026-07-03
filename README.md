@@ -28,18 +28,6 @@ Parsing is done with [`occt-import-js`](https://www.npmjs.com/package/occt-impor
 
 ![4](assets/4.png)
 
-## Install
-
-This plugin isn't in the community store yet. Install the beta with
-[BRAT](https://github.com/TfTHacker/obsidian42-brat):
-
-1. Install and enable **BRAT** from Community plugins.
-2. BRAT → **Add beta plugin** → enter `ondreu/step-viewer`.
-3. Enable **STEP Viewer** in Community plugins.
-
-BRAT installs `main.js`, `manifest.json` and `styles.css` from the latest
-release. The `occt-import-js` WASM is **inlined into `main.js`**, so the plugin
-is self-contained — no extra files to copy (design doc §6.1).
 
 ### Manual install
 
@@ -233,5 +221,4 @@ exhausting the browser's limited context pool (design doc §2.6 / §7.2).
 
 MIT (this plugin). `occt-import-js` / OpenCASCADE is **LGPL-2.1**; the bundled
 `occt-import-js.wasm` is distributed under that licence (see
-`node_modules/occt-import-js/dist/license.*.txt`). Verify LGPL compliance before
-publishing to the community store (design doc §2.5 / §11.5).
+`node_modules/occt-import-js/dist/license.*.txt`).
