@@ -279,6 +279,8 @@ export class ViewerController {
       if ((o as THREE.Mesh).userData?.[MESH_TAG]) this.pickables.push(o as THREE.Mesh);
     });
 
+    this.logMeshDiagnostics();
+
     const box = new THREE.Box3().setFromObject(group);
     const diag = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
     this.modelDiag = diag;
@@ -306,6 +308,69 @@ export class ViewerController {
     this.sectionCaps.build(group, diag);
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
+  }
+
+  /**
+   * One-off diagnostics for the "surfaces missing, only edges render" report.
+   * Logs a summary plus the largest meshes (the enclosure panels are the big
+   * ones) with the facts that decide the cause: material side, whether the
+   * geometry has a finite bounding sphere (NaN → frustum-culled → invisible),
+   * group coverage, and a sample normal length (0/NaN → unlit → invisible).
+   */
+  private logMeshDiagnostics(): void {
+    let frontSided = 0;
+    let nanSphere = 0;
+    const rows: {
+      name: string;
+      tris: number;
+      side: string;
+      sphere: string;
+      groups: number;
+      normLen: string;
+    }[] = [];
+
+    for (const mesh of this.pickables) {
+      const geom = mesh.geometry;
+      const tris = (geom.getIndex()?.count ?? 0) / 3;
+
+      const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const side =
+        (mat as THREE.Material)?.side === THREE.DoubleSide
+          ? "double"
+          : (mat as THREE.Material)?.side === THREE.FrontSide
+            ? "front"
+            : "back";
+      if (side !== "double") frontSided++;
+
+      geom.computeBoundingSphere();
+      const r = geom.boundingSphere?.radius ?? NaN;
+      const sphereOk = Number.isFinite(r);
+      if (!sphereOk) nanSphere++;
+
+      const normals = geom.getAttribute("normal");
+      let normLen = "none";
+      if (normals) {
+        const nx = normals.getX(0), ny = normals.getY(0), nz = normals.getZ(0);
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        normLen = Number.isFinite(len) ? len.toFixed(3) : "NaN";
+      }
+
+      rows.push({
+        name: mesh.name,
+        tris: Math.round(tris),
+        side,
+        sphere: sphereOk ? r.toFixed(1) : "NaN",
+        groups: geom.groups.length,
+        normLen,
+      });
+    }
+
+    rows.sort((a, b) => b.tris - a.tris);
+    console.info(
+      `[STEP Viewer] mesh diagnostics: ${this.pickables.length} meshes, ` +
+        `${frontSided} not double-sided, ${nanSphere} with NaN bounding sphere.`,
+    );
+    console.table(rows.slice(0, 12));
   }
 
   resetCamera(): void {

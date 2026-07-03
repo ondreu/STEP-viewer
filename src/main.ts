@@ -22,6 +22,7 @@ export default class StepViewerPlugin extends Plugin {
   geometryCache = new GeometryCache();
 
   async onload(): Promise<void> {
+    console.info(`[STEP Viewer] plugin ${this.manifest.version} loaded`);
     await this.loadSettings();
 
     this.registerView(STEP_VIEW_TYPE, (leaf) => new StepView(leaf, this));
