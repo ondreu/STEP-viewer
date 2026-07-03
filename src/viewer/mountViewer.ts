@@ -304,6 +304,10 @@ export function mountModel(
     onExportObj: () => void exportObjToVault(controller, opts),
   });
 
+  // Pressing Esc leaves immersive mode from inside the controller; re-sync the
+  // toolbar button so it doesn't stay stuck "active".
+  controller.onImmersiveChange = () => toolbar.sync();
+
   // Per-frame overlays: keep the cube oriented and the labels positioned.
   controller.registerFrameCallback(() => cube.update());
   controller.registerFrameCallback(() =>

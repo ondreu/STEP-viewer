@@ -74,7 +74,45 @@ export function stepToThree(result: OcctResult): StepModel {
   const tree = buildNode(effectiveRoot, result.meshes, "Model", withEdges);
   const group = tree.object as THREE.Group;
   group.name = "step-model";
+  logHierarchy(effectiveRoot, result.meshes.length);
   return { group, tree };
+}
+
+/**
+ * Dump the parsed assembly hierarchy to the console. The structure tree can only
+ * ever be as deep as what occt-import-js returns in `result.root`; if a user
+ * sees fewer subassemblies than FreeCAD/other viewers, this shows exactly what
+ * the parser produced (node names, depth, per-node mesh counts) so the gap can
+ * be pinned on the parse rather than the tree rendering. Transforms are baked
+ * into mesh vertices, so a flatter tree here never affects what's drawn.
+ */
+function logHierarchy(root: OcctNode, meshCount: number): void {
+  let nodes = 0;
+  let maxDepth = 0;
+  const lines: string[] = [];
+  const walk = (node: OcctNode, depth: number): void => {
+    nodes++;
+    maxDepth = Math.max(maxDepth, depth);
+    const m = node.meshes?.length ?? 0;
+    const c = node.children?.length ?? 0;
+    if (lines.length < 200) {
+      lines.push(
+        `${"  ".repeat(depth)}${node.name || "(unnamed)"}` +
+          `${m ? `  [${m} mesh${m === 1 ? "" : "es"}]` : ""}` +
+          `${c ? `  {${c} child${c === 1 ? "" : "ren"}}` : ""}`,
+      );
+    }
+    for (const child of node.children ?? []) walk(child, depth + 1);
+  };
+  walk(root, 0);
+  console.info(
+    `[STEP Viewer] parsed assembly hierarchy: ${nodes} node(s), ` +
+      `max depth ${maxDepth}, ${meshCount} mesh(es). If subassemblies look ` +
+      `missing vs. another viewer, the parser (occt-import-js) flattened them — ` +
+      `the tree mirrors this structure exactly:\n` +
+      lines.join("\n") +
+      (nodes > 200 ? `\n… (${nodes - 200} more nodes)` : ""),
+  );
 }
 
 /** Total triangle count across all meshes (index length / 3). */

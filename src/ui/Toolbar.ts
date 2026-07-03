@@ -38,6 +38,8 @@ export interface ToolbarHandle {
   el: HTMLElement;
   /** Open the structure tree if it isn't already, keeping the button in sync. */
   ensureTreeOpen: () => void;
+  /** Re-read controller state into the buttons (e.g. after an auto mode exit). */
+  sync: () => void;
 }
 
 export function createToolbar(
@@ -71,6 +73,15 @@ export function createToolbar(
     controller.toggleProjection();
     sync();
   });
+  const immerse = iconButton(
+    g2,
+    "footprints",
+    "Immersive walk / fly-through (WASD + mouse, Esc to exit)",
+    () => {
+      controller.toggleImmersive();
+      sync();
+    },
+  );
 
   const g3 = card(host);
   const section = iconButton(g3, "scissors", "Section plane", () => {
@@ -136,6 +147,7 @@ export function createToolbar(
       controller.isOrthographic() ? "Switch to perspective" : "Switch to orthographic",
       { placement: "left" },
     );
+    immerse.toggleClass("is-active", controller.isImmersive());
     section.toggleClass("is-active", sectionOpen);
     explode.toggleClass("is-active", explodeOpen);
     measure.toggleClass("is-active", controller.isMeasuring());
@@ -157,6 +169,7 @@ export function createToolbar(
       treeOpen = opts.onToggleTree();
       sync();
     },
+    sync,
   };
 }
 

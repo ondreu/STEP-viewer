@@ -83,6 +83,40 @@
   cursor: crosshair;
 }
 
+/* --- Immersive (walk / fly) mode: centre crosshair + controls hint --- */
+.step-viewer-host.is-immersive .step-viewer-canvas {
+  cursor: none;
+}
+.step-viewer-host.is-immersive::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 20;
+}
+.step-viewer-host.is-immersive::before {
+  content: "WASD move · Q/E down/up · Shift faster · mouse look · Esc exit";
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-on-accent, #fff);
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+}
+
 /* --- Projected HTML labels (measurement numbers + annotations) --- */
 .step-viewer-labels {
   position: absolute;

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { fitCameraToObject } from "./fitCamera";
 import { EDGES_TAG, MESH_TAG } from "./StepToThree";
 import { SectionCaps } from "./SectionCaps";
@@ -24,6 +25,14 @@ const MARKER_SCREEN = 0.008;
 // Scratch objects reused by the per-frame marker rescale (avoids allocations).
 const _tmpV = new THREE.Vector3();
 const _tmpS = new THREE.Vector3();
+// Scratch for the immersive (fly) movement integration.
+const _flyDir = new THREE.Vector3();
+
+/** Keys that drive immersive movement — their default (scroll/etc) is suppressed. */
+const FLY_KEYS = new Set([
+  "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "KeyC", "Space",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+]);
 
 /** Details of the part currently under the cursor, for the info panel + tree. */
 export interface PartInfo {
@@ -100,6 +109,16 @@ export class ViewerController {
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   private orthographic = false;
   private controls: OrbitControls;
+
+  // Immersive "walk / fly through the model" mode: pointer-lock mouse-look plus
+  // WASD/QE keyboard movement, replacing OrbitControls while active.
+  private immersive = false;
+  private flyControls: PointerLockControls | null = null;
+  private keysDown = new Set<string>();
+  private flySpeed = 1; // world units / second, scaled to the model on load
+  /** Fired when immersive mode turns on/off (so the toolbar button can sync). */
+  onImmersiveChange: ((on: boolean) => void) | null = null;
+
   private ro: ResizeObserver;
   private raf = 0;
   private model: THREE.Group | null = null;
@@ -288,6 +307,8 @@ export class ViewerController {
     this.modelDiag = diag;
     this.markerRadius = Math.max(diag * 0.006, 1e-4);
     this.snapThreshold = this.markerRadius * 4;
+    // Base fly speed crosses the model in a few seconds; Shift boosts it.
+    this.flySpeed = Math.max(diag * 0.5, 1e-3);
 
     // Record top-level parts for explode (outward direction from assembly centre).
     this.explodeParts = [];
@@ -911,6 +932,95 @@ export class ViewerController {
   toggleSnap(): boolean {
     this.snapEnabled = !this.snapEnabled;
     return this.snapEnabled;
+  }
+
+  // --- Immersive (walk / fly) mode ----------------------------------------
+
+  isImmersive(): boolean {
+    return this.immersive;
+  }
+
+  /**
+   * Toggle first-person immersion: pointer-lock mouse-look with WASD movement,
+   * Q/E (or C/Space) for down/up, and Shift to move faster — you fly through
+   * the model like a fly. Returns the new state.
+   */
+  toggleImmersive(): boolean {
+    this.setImmersive(!this.immersive);
+    return this.immersive;
+  }
+
+  private setImmersive(on: boolean): void {
+    if (on === this.immersive) return;
+    if (on) {
+      // Immersion is a perspective, orbit-free mode; drop conflicting modes.
+      if (this.orthographic) this.setProjection(false);
+      if (this.measureEnabled) this.toggleMeasure();
+      if (this.annotateEnabled) this.setAnnotate(false);
+      this.setHover(null);
+      this.controls.enabled = false;
+      if (!this.flyControls) {
+        this.flyControls = new PointerLockControls(this.perspCamera, this.renderer.domElement);
+        this.flyControls.addEventListener("unlock", this.onFlyUnlock);
+      }
+      this.immersive = true;
+      this.host.toggleClass("is-immersive", true);
+      activeWindow.addEventListener("keydown", this.onFlyKeyDown);
+      activeWindow.addEventListener("keyup", this.onFlyKeyUp);
+      this.flyControls.lock(); // requested from the toolbar click (a user gesture)
+    } else {
+      this.immersive = false;
+      this.host.toggleClass("is-immersive", false);
+      this.keysDown.clear();
+      activeWindow.removeEventListener("keydown", this.onFlyKeyDown);
+      activeWindow.removeEventListener("keyup", this.onFlyKeyUp);
+      if (this.flyControls?.isLocked) this.flyControls.unlock();
+      // Re-anchor the orbit target ahead of where we ended up so it doesn't jump.
+      this.perspCamera.getWorldDirection(_flyDir);
+      this.controls.target
+        .copy(this.perspCamera.position)
+        .addScaledVector(_flyDir, this.modelDiag * 0.5);
+      this.controls.enabled = true;
+      this.controls.update();
+    }
+    this.onImmersiveChange?.(this.immersive);
+  }
+
+  /** Escape releases pointer lock (browser default) — leave immersive mode too. */
+  private onFlyUnlock = (): void => {
+    if (this.immersive) this.setImmersive(false);
+  };
+
+  private onFlyKeyDown = (e: KeyboardEvent): void => {
+    if (!this.immersive) return;
+    if (FLY_KEYS.has(e.code)) e.preventDefault(); // don't scroll the note
+    this.keysDown.add(e.code);
+  };
+
+  private onFlyKeyUp = (e: KeyboardEvent): void => {
+    this.keysDown.delete(e.code);
+  };
+
+  /** Integrate one frame of immersive movement from the held keys. */
+  private updateFly(dt: number): void {
+    if (!this.immersive || !this.flyControls?.isLocked) return;
+    const k = this.keysDown;
+    const boost = k.has("ShiftLeft") || k.has("ShiftRight") ? 3.5 : 1;
+    const step = this.flySpeed * boost * dt;
+    const fwd =
+      (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) -
+      (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0);
+    const strafe =
+      (k.has("KeyD") || k.has("ArrowRight") ? 1 : 0) -
+      (k.has("KeyA") || k.has("ArrowLeft") ? 1 : 0);
+    const rise =
+      (k.has("Space") || k.has("KeyE") ? 1 : 0) - (k.has("KeyC") || k.has("KeyQ") ? 1 : 0);
+    if (fwd) {
+      this.flyControls.getDirection(_flyDir); // full look direction (true fly)
+      this.perspCamera.position.addScaledVector(_flyDir, fwd * step);
+    }
+    if (strafe) this.flyControls.moveRight(strafe * step);
+    if (rise) this.perspCamera.position.y += rise * step;
   }
 
   isWireframe(): boolean {
@@ -1649,10 +1759,12 @@ export class ViewerController {
     this.raf = window.requestAnimationFrame(this.animate);
     const dt = this.clock.getDelta();
     this.advanceRoll(dt);
-    this.controls.update();
-    // Frame-throttled pointer raycasting; suppressed while dragging (orbit).
+    if (this.immersive) this.updateFly(dt);
+    else this.controls.update();
+    // Frame-throttled pointer raycasting; suppressed while dragging (orbit) or
+    // in immersive mode (the pointer is locked, so screen NDC is meaningless).
     // In measure mode it drives the snap preview; otherwise the hover highlight.
-    if (this.hoverPending && !this.dragging) {
+    if (this.hoverPending && !this.dragging && !this.immersive) {
       this.hoverPending = false;
       if (this.measureEnabled || this.annotateEnabled) this.updateMeasurePreview();
       else this.processHover();
@@ -1670,6 +1782,16 @@ export class ViewerController {
     window.cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.controls.dispose();
+
+    if (this.immersive) this.host.toggleClass("is-immersive", false);
+    activeWindow.removeEventListener("keydown", this.onFlyKeyDown);
+    activeWindow.removeEventListener("keyup", this.onFlyKeyUp);
+    if (this.flyControls) {
+      this.flyControls.removeEventListener("unlock", this.onFlyUnlock);
+      if (this.flyControls.isLocked) this.flyControls.unlock();
+      this.flyControls.dispose();
+      this.flyControls = null;
+    }
 
     const el = this.renderer.domElement;
     el.removeEventListener("pointerdown", this.onPointerDown);
