@@ -1828,6 +1828,15 @@ export class ViewerController {
     let best: THREE.Vector3 | null = null;
     let bestScore = Infinity;
 
+    // Hole-centre snap should only fire when the click is actually on the
+    // circular edge (the rim), not just anywhere near the hole's plane — using
+    // the full snapThreshold for the rim made it grab from far off the edge,
+    // which read as "way too aggressive". Keep a lenient plane tolerance (a
+    // click slightly off-plane due to perspective should still count), but a
+    // tight rim tolerance: a fraction of the snap threshold, never tinier than
+    // a few screen pixels so small holes stay usable.
+    const ringThreshold = Math.max(this.snapThreshold * 0.15, this.markerRadius * 0.5);
+
     for (const c of circles) {
       cw.copy(c.center).applyMatrix4(mw);
       nw.copy(c.normal).transformDirection(mw).normalize();
@@ -1837,7 +1846,7 @@ export class ViewerController {
       if (planeDist > this.snapThreshold) continue;
       plane.projectPoint(p, proj);
       const ring = Math.abs(proj.distanceTo(cw) - r); // distance to the rim
-      if (ring > this.snapThreshold) continue;
+      if (ring > ringThreshold) continue;
       const score = planeDist + ring;
       if (score < bestScore) {
         bestScore = score;
