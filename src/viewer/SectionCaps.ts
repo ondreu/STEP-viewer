@@ -18,7 +18,10 @@ import { MESH_TAG } from "./StepToThree";
  */
 export class SectionCaps {
   private capMesh: THREE.Mesh | null = null;
-  private stencilMeshes: THREE.Mesh[] = [];
+  /** Each stencil pair plus the model mesh it derives from, so visibility can be
+   *  gated by whether the clip plane actually intersects that mesh (see
+   *  `updateVisibility`). */
+  private stencilPairs: { mesh: THREE.Mesh; back: THREE.Mesh; front: THREE.Mesh }[] = [];
   private texture: THREE.CanvasTexture | null = null;
   private enabled = false;
 
@@ -31,7 +34,7 @@ export class SectionCaps {
   build(model: THREE.Group, diag: number): void {
     this.dispose();
 
-    let skipped = 0;
+    let skippedOpen = 0;
     model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.userData?.[MESH_TAG]) return;
@@ -44,22 +47,24 @@ export class SectionCaps {
       // just its cut cross-section. Skip such meshes; their cut stays open
       // (uncapped) rather than veiling the view.
       if (!isWatertight(mesh.geometry)) {
-        skipped++;
+        skippedOpen++;
         return;
       }
       const back = this.stencilMesh(mesh.geometry, THREE.BackSide, THREE.IncrementWrapStencilOp);
       const front = this.stencilMesh(mesh.geometry, THREE.FrontSide, THREE.DecrementWrapStencilOp);
-      back.visible = this.enabled;
-      front.visible = this.enabled;
       mesh.add(back, front);
-      this.stencilMeshes.push(back, front);
+      this.stencilPairs.push({ mesh, back, front });
     });
-    if (skipped > 0) {
+    if (skippedOpen > 0) {
       console.info(
-        `[STEP Viewer] section cap: skipped ${skipped} non-watertight mesh(es) ` +
+        `[STEP Viewer] section cap: skipped ${skippedOpen} non-watertight mesh(es) ` +
           `(open shells / parts with missing faces) to keep the hatch from flooding.`,
       );
     }
+    // Gate each pair on whether the clip plane actually intersects its mesh —
+    // parts the plane doesn't cut must not contribute stencil, or their
+    // screen-space silhouette hatches the cap plane as a "shadow".
+    this.updateVisibility();
 
     // The cut cross-section is bounded by the model's diagonal (a plane through
     // the bounding sphere spans at most its diameter), so size the cap to just
@@ -121,25 +126,59 @@ export class SectionCaps {
 
   setEnabled(on: boolean): void {
     this.enabled = on;
-    for (const m of this.stencilMeshes) m.visible = on;
+    if (on) this.updateVisibility();
+    else for (const p of this.stencilPairs) (p.back.visible = p.front.visible = false);
     if (this.capMesh) this.capMesh.visible = on;
   }
 
-  /** Orient the cap plane onto the clip plane, centred near `center`. */
+  /** Orient the cap plane onto the clip plane, centred near `center`, and
+   *  re-gate stencil pairs on whether the (possibly moved) plane still
+   *  intersects each mesh — a part the plane no longer cuts must drop out of
+   *  the stencil or its silhouette keeps hatching the cap ("shadow"). */
   update(center: THREE.Vector3): void {
     if (!this.capMesh) return;
     const n = this.plane.normal;
     const dist = this.plane.distanceToPoint(center);
     this.capMesh.position.copy(center).addScaledVector(n, -dist);
     this.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    this.updateVisibility();
+  }
+
+  /**
+   * Show a mesh's stencil pair only when the clip plane passes through its
+   * world bounding box. The stencil marks "inside the solid" in screen space;
+   * a part that sits entirely on the kept side (the plane doesn't actually cut
+   * it) would otherwise contribute a non-zero stencil across its whole
+   * silhouette, and the cap plane — which spans the cut region — would hatch
+   * that silhouette as a floating "shadow". Gating by intersection restricts
+   * the stencil to genuine cut cross-sections only.
+   */
+  private updateVisibility(): void {
+    if (!this.enabled) return;
+    const box = new THREE.Box3();
+    for (const p of this.stencilPairs) {
+      box.setFromObject(p.mesh);
+      const cut = !box.isEmpty() && this.plane.intersectsBox(box);
+      p.back.visible = cut;
+      p.front.visible = cut;
+    }
+  }
+
+  /** Re-gate stencil pairs after the model (not the plane) moves — e.g. a roll
+   *  or explode shifts parts relative to the world-space clip plane, so a part
+   *  that was cut may no longer be (and vice versa). Cheap to call per frame. */
+  refresh(): void {
+    this.updateVisibility();
   }
 
   dispose(): void {
-    for (const m of this.stencilMeshes) {
-      m.parent?.remove(m);
-      (m.material as THREE.Material).dispose();
+    for (const { back, front } of this.stencilPairs) {
+      back.parent?.remove(back);
+      front.parent?.remove(front);
+      (back.material as THREE.Material).dispose();
+      (front.material as THREE.Material).dispose();
     }
-    this.stencilMeshes = [];
+    this.stencilPairs = [];
     if (this.capMesh) {
       this.scene.remove(this.capMesh);
       this.capMesh.geometry.dispose();

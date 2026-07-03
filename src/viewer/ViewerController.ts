@@ -750,6 +750,9 @@ export class ViewerController {
     for (const p of this.explodeParts) {
       p.obj.position.copy(p.base).addScaledVector(p.dir, spread);
     }
+    // Parts spread relative to the world-space clip plane; re-gate which meshes
+    // it still intersects so the cap doesn't shadow non-cut parts.
+    this.sectionCaps?.refresh();
   }
 
   // --- Selection highlight + isolate --------------------------------------
@@ -1053,6 +1056,9 @@ export class ViewerController {
     const e = easeInOut(this.roll.t);
     this.model.position.lerpVectors(this.roll.startPos, this.roll.endPos, e);
     this.model.quaternion.copy(this.roll.startQuat).slerp(this.roll.endQuat, e);
+    // Parts move relative to the world-space clip plane mid-roll, so re-gate
+    // which meshes the plane still intersects (else the cap shadow flickers).
+    this.sectionCaps?.refresh();
     if (this.roll.t >= 1) {
       this.roll.active = false;
       // The clip plane is world-space; re-derive it from the rolled bounds.
