@@ -1452,6 +1452,46 @@ export class ViewerController {
   }
 
   /**
+   * True if every mesh under `object` is currently transparent (opacity < 1),
+   * i.e. the part was made transparent via `makeObjectTransparent`. Used by the
+   * RMB menu to swap "Make this object transparent" → "Make this object solid".
+   */
+  isObjectTransparent(object: THREE.Object3D): boolean {
+    let anyMesh = false;
+    let allTransparent = true;
+    object.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.userData?.[MESH_TAG] || !allTransparent) return;
+      anyMesh = true;
+      const material = mesh.material;
+      const mats = Array.isArray(material) ? material : [material];
+      for (const m of mats) {
+        if (m && "opacity" in m && (m as THREE.MeshStandardMaterial).opacity < 1) continue;
+        allTransparent = false;
+      }
+    });
+    return anyMesh && allTransparent;
+  }
+
+  /** Revert every mesh under `object` to fully opaque (undoing
+   *  `makeObjectTransparent` on just that part). Leaves the global transparency
+   *  toggle and other parts untouched. */
+  makeObjectSolid(object: THREE.Object3D): void {
+    object.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.userData?.[MESH_TAG]) return;
+      const material = mesh.material;
+      for (const m of Array.isArray(material) ? material : [material]) {
+        if (!m) continue;
+        m.transparent = this.transparent;
+        m.opacity = this.transparent ? TRANSPARENT_OPACITY : 1;
+        m.depthWrite = !this.transparent;
+        m.needsUpdate = true;
+      }
+    });
+  }
+
+  /**
    * Make every mesh under `object` see-through (so parts in front of it stop
    * blocking what's behind), used by the RMB "Make this object transparent".
    * Independent of the global transparency toggle: it sets material state on

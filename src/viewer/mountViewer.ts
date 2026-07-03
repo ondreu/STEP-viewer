@@ -216,14 +216,15 @@ export function mountModel(
             treePanel.syncState();
           }),
       );
-      menu.addItem((i) =>
-        i
-          .setTitle("Make this object transparent")
-          .setIcon("layers")
+      menu.addItem((i) => {
+        const transparent = controller.isObjectTransparent(part.object);
+        i.setTitle(transparent ? "Make this object solid" : "Make this object transparent")
+          .setIcon(transparent ? "box" : "layers")
           .onClick(() => {
-            controller.makeObjectTransparent(part.object);
-          }),
-      );
+            if (transparent) controller.makeObjectSolid(part.object);
+            else controller.makeObjectTransparent(part.object);
+          });
+      });
       menu.addSeparator();
     }
     menu.addItem((i) =>
