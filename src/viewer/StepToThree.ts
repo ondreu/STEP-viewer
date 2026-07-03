@@ -185,15 +185,67 @@ function buildMaterials(
   const materials: THREE.Material[] = [];
   geometry.clearGroups();
 
+  // Total triangles in the mesh (index length / 3). Three.js only draws
+  // triangles that lie inside a geometry group, so every triangle must be
+  // covered by exactly one group — otherwise it silently vanishes while the
+  // edge overlay (EdgesGeometry, which ignores groups) still renders. Large
+  // solids sometimes come back with brep_faces that don't tile the whole
+  // range, which is why a box's walls can disappear but its edges remain.
+  const triCount = (geometry.getIndex()?.count ?? 0) / 3;
+
   // `faces` is narrowed to a non-empty array here: hasFaceColors is a const
-  // whose truthiness implies Array.isArray(faces).
-  for (const face of faces) {
+  // whose truthiness implies Array.isArray(faces). Sort by start triangle so
+  // we can detect and backfill any gaps between/around the face segments.
+  const sorted = [...faces].sort((a, b) => a.first - b.first);
+
+  // Lazily create the shared default-color material used to fill any triangle
+  // range not claimed by a brep_face segment.
+  let fillerIndex = -1;
+  const fillerMaterialIndex = (): number => {
+    if (fillerIndex === -1) {
+      fillerIndex = materials.length;
+      materials.push(standardMaterial(mesh.color));
+    }
+    return fillerIndex;
+  };
+  const addTriGroup = (firstTri: number, lastTri: number, materialIndex: number): void => {
+    if (lastTri < firstTri) return;
+    geometry.addGroup(firstTri * 3, (lastTri - firstTri + 1) * 3, materialIndex);
+  };
+
+  let cursor = 0; // first not-yet-covered triangle
+  let gapTris = 0; // triangles rescued from uncovered ranges (diagnostics)
+  for (const face of sorted) {
+    // Clamp the segment to the valid triangle range; drop empty/invalid ones.
+    const first = Math.max(0, Math.min(face.first, triCount - 1));
+    const last = Math.max(first, Math.min(face.last, triCount - 1));
+
+    // Backfill any gap before this face so those triangles still render.
+    if (first > cursor) {
+      gapTris += first - cursor;
+      addTriGroup(cursor, first - 1, fillerMaterialIndex());
+    }
+
     const materialIndex = materials.length;
     materials.push(standardMaterial(face.color ?? mesh.color));
-    // brep_faces index triangles; a triangle spans 3 indices.
-    const start = face.first * 3;
-    const count = (face.last - face.first + 1) * 3;
-    geometry.addGroup(start, count, materialIndex);
+    addTriGroup(first, last, materialIndex);
+
+    cursor = Math.max(cursor, last + 1);
+  }
+
+  // Backfill any trailing triangles past the last face segment.
+  if (cursor < triCount) {
+    gapTris += triCount - cursor;
+    addTriGroup(cursor, triCount - 1, fillerMaterialIndex());
+  }
+
+  if (gapTris > 0) {
+    console.warn(
+      `[step-viewer] mesh "${mesh.name ?? "?"}": brep_faces covered only ` +
+        `${triCount - gapTris}/${triCount} triangles; ${gapTris} were not ` +
+        `assigned a face segment and would have been invisible — backfilled ` +
+        `with the mesh's default color.`,
+    );
   }
 
   return materials;
