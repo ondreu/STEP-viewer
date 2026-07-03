@@ -14,6 +14,7 @@ export class PartInfoPanel {
   private matSwatch: HTMLElement;
   private matText: HTMLElement;
   private dimsEl: HTMLElement;
+  private centerEl: HTMLElement;
   private volEl: HTMLElement;
   private trisEl: HTMLElement;
 
@@ -25,6 +26,7 @@ export class PartInfoPanel {
     this.matSwatch = this.matEl.createSpan({ cls: "step-viewer-info-swatch" });
     this.matText = this.matEl.createSpan();
     this.dimsEl = this.el.createDiv({ cls: "step-viewer-info-meta" });
+    this.centerEl = this.el.createDiv({ cls: "step-viewer-info-meta" });
     this.volEl = this.el.createDiv({ cls: "step-viewer-info-meta" });
     this.trisEl = this.el.createDiv({ cls: "step-viewer-info-meta" });
     this.el.hide();
@@ -49,6 +51,10 @@ export class PartInfoPanel {
 
     this.dimsEl.setText(
       `${fmt(part.size.x)} × ${fmt(part.size.y)} × ${fmt(part.size.z)} mm`,
+    );
+
+    this.centerEl.setText(
+      `Centre  ${fmt(part.center.x)}, ${fmt(part.center.y)}, ${fmt(part.center.z)} mm`,
     );
 
     this.volEl.setText(`${volume(part.volume)}  ·  ${area(part.area)}`);

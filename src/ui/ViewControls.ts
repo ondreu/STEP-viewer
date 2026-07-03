@@ -8,9 +8,9 @@ export interface ControlHandle {
 
 /**
  * Floating control for the section (clipping) plane: axis picker and flip. The
- * cut is moved and tilted directly with the in-model handles (an arrow to slide
- * it along its normal, arcs to angle it). Showing the panel enables clipping;
- * hiding it disables it.
+ * cut is moved and tilted directly with the in-model handles — an arrow slides
+ * it along its normal, and two arcs (bound to the cut, not the camera) angle it.
+ * Showing the panel enables clipping; hiding it disables it.
  */
 export function createSectionControl(
   host: HTMLElement,
@@ -50,28 +50,11 @@ export function createSectionControl(
     flip.toggleClass("is-active", next);
   });
 
-  // Tilt the cut off its axis with two static sliders (about the plane's two
-  // in-plane axes). Sliders instead of a rotate gizmo: they stay put on screen
-  // and can't be grabbed together with the in-model move arrow.
-  const tilt = el.createDiv({ cls: "step-viewer-viewctl-tilt" });
-  const makeTilt = (label: string): HTMLInputElement => {
-    const row = tilt.createDiv({ cls: "step-viewer-viewctl-tilt-row" });
-    row.createSpan({ cls: "step-viewer-viewctl-tilt-label", text: label });
-    const s = row.createEl("input", {
-      cls: "step-viewer-viewctl-slider",
-      attr: { type: "range", min: "-90", max: "90", step: "1", value: "0" },
-    });
-    setTooltip(s, `Tilt the cut (${label})`);
-    return s;
-  };
-  const tiltA = makeTilt("Tilt ↕");
-  const tiltB = makeTilt("Tilt ↔");
-  const applyTilt = (): void => {
-    const deg = Math.PI / 180;
-    controller.setSectionTilt(parseFloat(tiltA.value) * deg, parseFloat(tiltB.value) * deg);
-  };
-  tiltA.addEventListener("input", applyTilt);
-  tiltB.addEventListener("input", applyTilt);
+  // Tilting is done in the model with the two rotation arcs on the cut handle
+  // (see ViewerController.ensureSectionGizmo) — bound to the cut, not the view,
+  // and spaced clear of the move arrow so the two can't be grabbed together.
+  const hint = el.createDiv({ cls: "step-viewer-viewctl-hint" });
+  hint.setText("Drag the arrow to move · the arcs to tilt");
 
   return {
     el,
@@ -81,10 +64,7 @@ export function createSectionControl(
       if (open) {
         syncAxes();
         flip.toggleClass("is-active", controller.isSectionFlipped());
-        // Start each session flat and centred; the arrow + tilt sliders take over.
-        tiltA.value = "0";
-        tiltB.value = "0";
-        controller.setSectionTilt(0, 0);
+        // Start each session flat and centred; the arrow + arcs take over.
         controller.setSectionPosition(0.5);
       }
     },

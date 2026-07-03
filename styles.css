@@ -672,26 +672,9 @@
   width: 150px;
 }
 
-.step-viewer-viewctl-tilt {
-  display: flex;
-  flex-direction: column;
-  gap: var(--size-2-1);
-}
-
-.step-viewer-viewctl-tilt-row {
-  display: flex;
-  align-items: center;
-  gap: var(--size-2-2);
-}
-
-.step-viewer-viewctl-tilt-label {
-  min-width: 42px;
+.step-viewer-viewctl-hint {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
-}
-
-.step-viewer-viewctl-tilt-row .step-viewer-viewctl-slider {
-  width: 110px;
 }
 
 /* --- Annotation extras: colour swatch, link, markdown --- */

@@ -12,6 +12,7 @@ const HIGHLIGHT_COLOR = 0xff8a00;
 const SELECT_COLOR = 0x3b82f6;
 const SNAP_COLOR = 0x22cc66;
 const ANNOT_COLOR = 0xffc531;
+const SECTION_PLANE_COLOR = 0x3b82f6;
 const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3b82f6 };
 // A click that moves less than this many pixels is a pick, not an orbit drag.
 const CLICK_MOVE_THRESHOLD = 5;
@@ -41,6 +42,8 @@ export interface PartInfo {
   name: string;
   triangles: number;
   size: { x: number; y: number; z: number };
+  /** Part centre in model-local coordinates (mm), stable across view rolls. */
+  center: { x: number; y: number; z: number };
   /** Assembly path from the model root down to this part (names joined). */
   path: string;
   /** Approx. volume (mm³) and surface area (mm²) from the mesh. */
@@ -138,20 +141,20 @@ export class ViewerController {
   private sectionFlip = false;
   private sectionT = 0.5;
   private sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
-  // Tilt of the cut away from its axis-aligned normal, in radians, about the
-  // plane's two in-plane axes (driven by the panel sliders). Kept separate from
-  // the axis/flip so tilting composes on top of the chosen base direction.
-  private sectionTiltX = 0;
-  private sectionTiltY = 0;
   // Interactive section gizmo: a proxy transform (its local +Z is the cut
-  // normal) driven either by the panel controls or, directly in the model, by a
-  // single TransformControls arrow that slides the cut along its normal. Tilting
-  // is done with the panel sliders (a rotate gizmo's arcs swim with the camera
-  // and are trivially grabbed together with the arrow, so we don't use one). The
-  // hatch cap (SectionCaps) visualises the cut where it passes through material.
+  // normal). Its full orientation IS the tilt — the axis buttons seed it flat,
+  // then the in-model rotate arcs angle it. Two separate TransformControls share
+  // the proxy: an along-normal arrow (translate) that slides the cut, and a
+  // pair of in-plane rotation arcs (rotate, local space so they stay bound to
+  // the cut, not the camera). They are sized far apart so neither can be grabbed
+  // together with the other. A translucent quad on the proxy shows the cut
+  // surface itself; the hatch cap (SectionCaps) fills it where it passes through
+  // material.
   private sectionProxy: THREE.Object3D | null = null;
   private sectionCaps: SectionCaps | null = null;
   private sectionGizmo: TransformControls | null = null;
+  private sectionRotateGizmo: TransformControls | null = null;
+  private sectionPlaneVis: THREE.Object3D | null = null;
 
   // Explode state: per top-level part, its base local position + outward dir.
   private exploded = 0;
@@ -358,6 +361,7 @@ export class ViewerController {
     this.applySection();
     if (!this.sectionCaps) this.sectionCaps = new SectionCaps(this.scene, this.sectionPlane);
     this.sectionCaps.build(group, diag);
+    this.resizeSectionVis();
     this.scene.add(group);
     fitCameraToObject(this.camera, this.controls, group);
   }
@@ -500,6 +504,7 @@ export class ViewerController {
     this.orthographic = ortho;
     this.rebuildControls(target);
     if (this.sectionGizmo) this.sectionGizmo.camera = this.camera;
+    if (this.sectionRotateGizmo) this.sectionRotateGizmo.camera = this.camera;
     return this.orthographic;
   }
 
@@ -551,19 +556,9 @@ export class ViewerController {
 
   setSectionFlip(flip: boolean): void {
     this.sectionFlip = flip;
-    // Flipping only swaps the kept side — keep the cut where it is.
-    this.updateSectionOrientation();
-  }
-
-  /** Tilt the cut off its axis-aligned normal (radians), about the plane's two
-   *  in-plane axes. Driven by the panel sliders — a static, always-visible
-   *  control that (unlike a rotate gizmo) doesn't swim with the camera. Tilting
-   *  pivots about the cut's current position (kept), so it composes with an
-   *  arrow drag instead of snapping the cut back to centre. */
-  setSectionTilt(tiltX: number, tiltY: number): void {
-    this.sectionTiltX = tiltX;
-    this.sectionTiltY = tiltY;
-    this.updateSectionOrientation();
+    // Flipping only swaps the kept side — the plane (and its tilt/position) is
+    // unchanged, so just re-derive the clip normal with the new sign.
+    this.deriveSectionPlaneFromProxy();
   }
 
   isSectioning(): boolean {
@@ -577,9 +572,10 @@ export class ViewerController {
   }
 
   /**
-   * Position the section proxy from the panel controls (axis + flip + tilt),
-   * then derive the clip plane from it. The move gizmo shares this proxy, so
-   * dragging the arrow and the panel controls drive the same cut.
+   * Seat the section proxy flat on the chosen axis at the current position, then
+   * derive the clip plane from it. Choosing an axis resets any tilt (a fresh,
+   * axis-aligned cut); the in-model arrow (move) and arcs (tilt) take it from
+   * there. The gizmos share this proxy, so they and the panel drive one cut.
    */
   private updateSectionPlane(): void {
     if (!this.model) return;
@@ -594,41 +590,28 @@ export class ViewerController {
     const point = box.getCenter(new THREE.Vector3());
     point[axis] = pos;
     proxy.position.copy(point);
-    proxy.quaternion.copy(this.sectionOrientation());
+    proxy.quaternion.copy(this.baseSectionOrientation());
     proxy.updateMatrixWorld(true);
     this.deriveSectionPlaneFromProxy();
   }
 
-  /** Re-orient the cut in place (tilt / flip) without moving it, so it composes
-   *  with wherever the arrow last dragged the cut to. */
-  private updateSectionOrientation(): void {
-    if (!this.model || !this.sectionProxy) return;
-    this.ensureSectionGizmo();
-    this.sectionProxy.quaternion.copy(this.sectionOrientation());
-    this.sectionProxy.updateMatrixWorld(true);
-    this.deriveSectionPlaneFromProxy();
-  }
-
-  /** The cut's orientation: the axis-aligned base normal (flip included) with the
-   *  two tilt angles applied about the plane's local X/Y. */
-  private sectionOrientation(): THREE.Quaternion {
+  /** The axis-aligned base orientation (no tilt, no flip): local +Z along the
+   *  chosen axis. The rotate arcs then tilt the proxy off this. */
+  private baseSectionOrientation(): THREE.Quaternion {
     const axis = this.sectionAxis;
     const n = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
-    if (this.sectionFlip) n.negate();
-    const base = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-    const tilt = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(this.sectionTiltX, this.sectionTiltY, 0, "XYZ"),
-    );
-    return base.multiply(tilt); // tilt in the plane's local frame
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
   }
 
   /** Read the clip plane off the proxy's transform (its local +Z is the normal),
-   *  so both the panel controls and the in-model arrow update the same cut. */
+   *  so the panel, the move arrow and the tilt arcs all update the same cut.
+   *  `flip` negates the kept side without moving the plane. */
   private deriveSectionPlaneFromProxy(): void {
     if (!this.model || !this.sectionProxy) return;
     const n = new THREE.Vector3(0, 0, 1)
       .applyQuaternion(this.sectionProxy.quaternion)
       .normalize();
+    if (this.sectionFlip) n.negate();
     this.sectionPlane.normal.copy(n);
     // distance(p) = n·p + constant, keeps p where distance ≥ 0.
     this.sectionPlane.constant = -n.dot(this.sectionProxy.position);
@@ -636,36 +619,114 @@ export class ViewerController {
     this.sectionCaps?.update(box.getCenter(new THREE.Vector3()));
   }
 
-  /** Create the section proxy and the single move-along-normal arrow gizmo. */
+  /**
+   * Create the section proxy, the two in-model handles (an along-normal move
+   * arrow and a pair of in-plane tilt arcs) and the translucent plane that
+   * shows the cut surface. The arcs use local space so they stay bound to the
+   * cut (not the camera), and are sized well outside the arrow so the two can't
+   * be grabbed together.
+   */
   private ensureSectionGizmo(): void {
     if (this.sectionGizmo) return;
     const proxy = new THREE.Object3D();
     this.scene.add(proxy);
     this.sectionProxy = proxy;
 
-    const tc = new TransformControls(this.camera, this.renderer.domElement);
-    tc.setSpace("local"); // so the arrow points along the (tilted) cut normal
-    tc.setMode("translate");
-    tc.attach(proxy);
-    tc.showX = false;
-    tc.showY = false;
-    tc.showZ = true; // only the along-normal arrow
-    // Suspend orbiting while dragging, and re-derive the cut live.
-    tc.addEventListener("dragging-changed", (event) => {
-      this.controls.enabled = !(event as unknown as { value: boolean }).value;
-    });
-    tc.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
-    this.scene.add(tc);
-    this.sectionGizmo = tc;
+    // A translucent quad + outline on the proxy's local XY plane, showing the
+    // cut surface itself so the user can see where (and how tilted) it is.
+    proxy.add(this.buildSectionPlaneVis());
+
+    // Move-along-normal arrow (translate). Kept compact so it sits near the
+    // centre, well inside the tilt arcs.
+    const move = new TransformControls(this.camera, this.renderer.domElement);
+    move.setSpace("local"); // arrow points along the (tilted) cut normal
+    move.setMode("translate");
+    move.setSize(0.7);
+    move.attach(proxy);
+    move.showX = false;
+    move.showY = false;
+    move.showZ = true; // only the along-normal arrow
+    this.scene.add(move);
+    this.sectionGizmo = move;
+
+    // Tilt arcs (rotate). Local space so they follow the cut; only the two
+    // in-plane axes (X/Y) — hiding Z also hides the camera-aligned E/XYZE rings
+    // (TransformControls only shows those when all three axes are on). Larger
+    // than the arrow so its rings sit far outside the arrow's grab zone.
+    const rotate = new TransformControls(this.camera, this.renderer.domElement);
+    rotate.setSpace("local");
+    rotate.setMode("rotate");
+    rotate.setSize(1.5);
+    rotate.attach(proxy);
+    rotate.showX = true;
+    rotate.showY = true;
+    rotate.showZ = false; // spinning about the normal doesn't change the cut
+    this.scene.add(rotate);
+    this.sectionRotateGizmo = rotate;
+
+    // Suspend orbiting while either handle is dragged, and disable the other so
+    // a drag started on one can never also grab the other. Re-derive live.
+    const onDrag = (other: TransformControls) => (event: unknown): void => {
+      const active = (event as { value: boolean }).value;
+      this.controls.enabled = !active;
+      other.enabled = !active;
+    };
+    move.addEventListener("dragging-changed", onDrag(rotate));
+    rotate.addEventListener("dragging-changed", onDrag(move));
+    move.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
+    rotate.addEventListener("objectChange", () => this.deriveSectionPlaneFromProxy());
+
     this.showSectionGizmo(this.sectionEnabled);
   }
 
+  /** The translucent cut-surface quad (+ outline) parented to the proxy. Built
+   *  from a unit plane; the group is scaled to the model in `resizeSectionVis`. */
+  private buildSectionPlaneVis(): THREE.Object3D {
+    const group = new THREE.Group();
+    group.raycast = () => {};
+
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        color: SECTION_PLANE_COLOR,
+        transparent: true,
+        opacity: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    fill.renderOrder = 3;
+    fill.raycast = () => {};
+    group.add(fill);
+
+    const border = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
+      new THREE.LineBasicMaterial({ color: SECTION_PLANE_COLOR, transparent: true, opacity: 0.9 }),
+    );
+    border.renderOrder = 4;
+    border.raycast = () => {};
+    group.add(border);
+
+    this.sectionPlaneVis = group;
+    group.scale.setScalar(Math.max(this.modelDiag, 1));
+    group.visible = this.sectionEnabled;
+    return group;
+  }
+
+  /** Scale the cut-surface quad to the current model (called on model load). */
+  private resizeSectionVis(): void {
+    this.sectionPlaneVis?.scale.setScalar(Math.max(this.modelDiag, 1));
+  }
+
   private showSectionGizmo(on: boolean): void {
-    if (!this.sectionProxy || !this.sectionGizmo) return;
-    this.sectionGizmo.enabled = on;
-    this.sectionGizmo.visible = on;
-    if (on) this.sectionGizmo.attach(this.sectionProxy);
-    else this.sectionGizmo.detach();
+    if (this.sectionPlaneVis) this.sectionPlaneVis.visible = on;
+    for (const g of [this.sectionGizmo, this.sectionRotateGizmo]) {
+      if (!this.sectionProxy || !g) continue;
+      g.enabled = on;
+      g.visible = on;
+      if (on) g.attach(this.sectionProxy);
+      else g.detach();
+    }
   }
 
   /** Apply (or clear) the clip plane on model surfaces + edges only. */
@@ -1282,6 +1343,9 @@ export class ViewerController {
   private describePart(mesh: THREE.Mesh): PartInfo {
     const box = new THREE.Box3().setFromObject(mesh);
     const size = box.getSize(new THREE.Vector3());
+    // Report the centre in model-local space so it doesn't change when the view
+    // is rolled (the model group is what rotates, not the geometry).
+    const center = this.worldToLocal(box.getCenter(new THREE.Vector3()));
     const index = mesh.geometry.getIndex();
     const posCount = mesh.geometry.getAttribute("position")?.count ?? 0;
     const triangles = index ? index.count / 3 : posCount / 3;
@@ -1291,6 +1355,7 @@ export class ViewerController {
       name: mesh.name,
       triangles: Math.round(triangles),
       size: { x: size.x, y: size.y, z: size.z },
+      center: { x: center.x, y: center.y, z: center.z },
       path: this.partPath(mesh),
       volume,
       area,
@@ -1319,10 +1384,18 @@ export class ViewerController {
 
   private onPointerUp = (e: PointerEvent): void => {
     this.dragging = false;
-    if (e.button !== 0) return;
     const threshold =
       e.pointerType === "touch" ? TOUCH_MOVE_THRESHOLD : CLICK_MOVE_THRESHOLD;
     const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
+    // Right button: open the context menu here (on release) rather than on the
+    // browser `contextmenu` event, which on some platforms (Linux) fires on
+    // press — so a right-drag pan would pop the menu mid-pan. Only a stationary
+    // release opens it; a drag is treated as an orbit/pan.
+    if (e.button === 2) {
+      if (moved <= threshold) this.openContextMenu(e.clientX, e.clientY);
+      return;
+    }
+    if (e.button !== 0) return;
     if (moved > threshold) return; // it was an orbit drag, not a tap
     if (this.measureEnabled) this.pickMeasurePoint(e);
     else if (this.annotateEnabled) this.pickAnnotate(e);
@@ -1354,27 +1427,31 @@ export class ViewerController {
     this.onDoubleClickPart?.(this.describePart(mesh));
   };
 
-  /** Right-click: report the part under the cursor so the UI can pop a menu. */
+  /**
+   * Swallow the browser's native right-click menu over the canvas. The viewer's
+   * own menu is opened from `onPointerUp` (on release, after we know whether the
+   * right button was dragged to pan) — not here, because the `contextmenu` event
+   * fires on press on some platforms and would pop the menu mid-pan.
+   */
   private onContextMenuEvent = (e: MouseEvent): void => {
-    // Always swallow the browser's native menu over the canvas.
     e.preventDefault();
+  };
+
+  /** Raycast under the cursor and ask the UI to pop the context menu there. */
+  private openContextMenu(clientX: number, clientY: number): void {
     if (!this.onContextMenu) return;
     if (this.measureEnabled || this.annotateEnabled || this.immersive) return;
-    // The right button also pans (OrbitControls): if it was dragged, treat it as
-    // a pan and don't pop the menu — only a stationary right-click opens it.
-    const moved = Math.hypot(e.clientX - this.pointerDownX, e.clientY - this.pointerDownY);
-    if (moved > CLICK_MOVE_THRESHOLD) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
     const mesh =
       (this.raycaster.intersectObjects(this.visiblePickables(), false)[0]
         ?.object as THREE.Mesh) ?? null;
-    this.onContextMenu(mesh ? this.describePart(mesh) : null, e.clientX, e.clientY);
-  };
+    this.onContextMenu(mesh ? this.describePart(mesh) : null, clientX, clientY);
+  }
 
   /** Hide a single object (used by the right-click menu). */
   hideObject(object: THREE.Object3D): void {
@@ -2008,11 +2085,23 @@ export class ViewerController {
     this.sectionCaps?.dispose();
     this.sectionCaps = null;
 
-    if (this.sectionGizmo) {
-      this.sectionGizmo.detach();
-      this.sectionGizmo.dispose();
-      this.scene.remove(this.sectionGizmo);
-      this.sectionGizmo = null;
+    for (const g of [this.sectionGizmo, this.sectionRotateGizmo]) {
+      if (!g) continue;
+      g.detach();
+      g.dispose();
+      this.scene.remove(g);
+    }
+    this.sectionGizmo = null;
+    this.sectionRotateGizmo = null;
+    if (this.sectionPlaneVis) {
+      this.sectionPlaneVis.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose?.();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x?.dispose?.());
+        else mat?.dispose?.();
+      });
+      this.sectionPlaneVis = null;
     }
     if (this.sectionProxy) {
       this.scene.remove(this.sectionProxy);

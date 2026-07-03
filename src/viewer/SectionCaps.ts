@@ -42,7 +42,12 @@ export class SectionCaps {
       this.stencilMeshes.push(back, front);
     });
 
-    const size = Math.max(diag * 3, 1);
+    // The cut cross-section is bounded by the model's diagonal (a plane through
+    // the bounding sphere spans at most its diameter), so size the cap to just
+    // cover that — a hair over the diagonal. A much larger plane (the old 3×
+    // diagonal) needlessly blankets the viewport, so any stencil imperfection
+    // reads as "the whole plane is hatched" instead of only the cut solids.
+    const size = Math.max(diag * 1.3, 1);
     this.texture = makeHatchTexture();
     const spacing = Math.max(diag * 0.02, 1e-4);
     const repeat = Math.min(Math.max(size / spacing, 4), 400);
