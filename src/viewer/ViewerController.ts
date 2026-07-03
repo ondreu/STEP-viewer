@@ -320,18 +320,25 @@ export class ViewerController {
   private logMeshDiagnostics(): void {
     let frontSided = 0;
     let nanSphere = 0;
+    let withBadNormals = 0;
+    let withDegenerate = 0;
     const rows: {
       name: string;
       tris: number;
+      degen: number; // triangles with ~zero area
+      size: string; // physical bbox WxHxD (mm)
       side: string;
       sphere: string;
+      normBad: number; // NaN/zero-length vertex normals
       groups: number;
-      normLen: string;
     }[] = [];
 
+    const pos = new THREE.Vector3();
     for (const mesh of this.pickables) {
       const geom = mesh.geometry;
-      const tris = (geom.getIndex()?.count ?? 0) / 3;
+      const index = geom.getIndex();
+      const position = geom.getAttribute("position");
+      const tris = (index?.count ?? 0) / 3;
 
       const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const side =
@@ -343,34 +350,72 @@ export class ViewerController {
       if (side !== "double") frontSided++;
 
       geom.computeBoundingSphere();
+      geom.computeBoundingBox();
       const r = geom.boundingSphere?.radius ?? NaN;
       const sphereOk = Number.isFinite(r);
       if (!sphereOk) nanSphere++;
+      const bb = geom.boundingBox;
+      const size = bb
+        ? [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z]
+            .map((v) => (Number.isFinite(v) ? v.toFixed(0) : "?"))
+            .join("×")
+        : "?";
 
-      const normals = geom.getAttribute("normal");
-      let normLen = "none";
-      if (normals) {
-        const nx = normals.getX(0), ny = normals.getY(0), nz = normals.getZ(0);
-        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        normLen = Number.isFinite(len) ? len.toFixed(3) : "NaN";
+      // Count zero-area (degenerate) triangles — a surface made entirely of
+      // these renders nothing while its boundary edges still draw.
+      let degen = 0;
+      if (index && position) {
+        const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+        const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+        for (let t = 0; t < index.count; t += 3) {
+          a.fromBufferAttribute(position, index.getX(t));
+          b.fromBufferAttribute(position, index.getX(t + 1));
+          c.fromBufferAttribute(position, index.getX(t + 2));
+          ab.subVectors(b, a); ac.subVectors(c, a);
+          if (ab.cross(ac).lengthSq() < 1e-14) degen++;
+        }
       }
+      if (degen > 0) withDegenerate++;
+
+      // Scan ALL vertex normals for NaN/zero-length (not just vertex 0).
+      const normals = geom.getAttribute("normal");
+      let normBad = 0;
+      if (normals) {
+        for (let i = 0; i < normals.count; i++) {
+          pos.set(normals.getX(i), normals.getY(i), normals.getZ(i));
+          const l2 = pos.lengthSq();
+          if (!Number.isFinite(l2) || l2 < 1e-10) normBad++;
+        }
+      }
+      if (normBad > 0) withBadNormals++;
 
       rows.push({
         name: mesh.name,
         tris: Math.round(tris),
+        degen,
+        size,
         side,
         sphere: sphereOk ? r.toFixed(1) : "NaN",
+        normBad,
         groups: geom.groups.length,
-        normLen,
       });
     }
 
-    rows.sort((a, b) => b.tris - a.tris);
     console.info(
-      `[STEP Viewer] mesh diagnostics: ${this.pickables.length} meshes, ` +
-        `${frontSided} not double-sided, ${nanSphere} with NaN bounding sphere.`,
+      `[STEP Viewer] mesh diagnostics: ${this.pickables.length} meshes | ` +
+        `${frontSided} not double-sided | ${nanSphere} NaN sphere | ` +
+        `${withBadNormals} with bad normals | ${withDegenerate} with degenerate triangles.`,
     );
-    console.table(rows.slice(0, 12));
+    // Largest by physical size first — the enclosure panels are the big ones.
+    rows.sort((a, b) => parseFloat(b.sphere) - parseFloat(a.sphere));
+    console.info("[STEP Viewer] largest 15 meshes by size:");
+    console.table(rows.slice(0, 15));
+    // Anything anomalous, regardless of size.
+    const bad = rows.filter((r) => r.degen > 0 || r.normBad > 0 || r.side !== "double");
+    if (bad.length) {
+      console.warn(`[STEP Viewer] ${bad.length} anomalous meshes (degenerate/bad-normal/one-sided):`);
+      console.table(bad.slice(0, 30));
+    }
   }
 
   resetCamera(): void {
