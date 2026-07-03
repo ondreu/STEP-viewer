@@ -48,6 +48,18 @@ export function createSectionControl(
     flip.toggleClass("is-active", next);
   });
 
+  // Toggle the in-model handle between dragging the cut and tilting it (arcs).
+  const gizmo = el.createEl("button", {
+    cls: "step-viewer-btn clickable-icon step-viewer-viewctl-gizmo",
+    text: "Tilt",
+  });
+  setTooltip(gizmo, "Handle mode: drag to move the cut / tilt to rotate it");
+  gizmo.addEventListener("click", () => {
+    const mode = controller.toggleSectionGizmoMode();
+    gizmo.toggleClass("is-active", mode === "rotate");
+    gizmo.setText(mode === "rotate" ? "Move" : "Tilt");
+  });
+
   const slider = el.createEl("input", {
     cls: "step-viewer-viewctl-slider",
     attr: { type: "range", min: "0", max: "1", step: "0.005", value: "0.5" },
