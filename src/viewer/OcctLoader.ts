@@ -131,6 +131,7 @@ function ensureWorker(): Worker {
 async function parseInWorker(
   bytes: Uint8Array,
   params: OcctReadParams,
+  format: "step" | "brep",
 ): Promise<ParseOutcome> {
   const wasmBinary = await getWasm();
   const w = ensureWorker();
@@ -146,7 +147,7 @@ async function parseInWorker(
     pending.set(id, { resolve, reject });
     // Transfer the file bytes so they don't linger as a second copy on the main
     // thread during the parse. Callers must not touch `bytes` afterwards.
-    w.postMessage({ type: "parse", id, bytes, params }, [bytes.buffer]);
+    w.postMessage({ type: "parse", id, bytes, params, format }, [bytes.buffer]);
   });
 }
 
@@ -161,7 +162,7 @@ export const OcctLoader = {
    */
   async parseStep(bytes: Uint8Array, params: OcctReadParams): Promise<ParseOutcome> {
     if (workerSupported()) {
-      return parseInWorker(bytes, params);
+      return parseInWorker(bytes, params, "step");
     }
     const occt = await getModule();
     const t0 = typeof performance !== "undefined" ? performance.now() : 0;
@@ -169,6 +170,32 @@ export const OcctLoader = {
     const ms = Math.round((typeof performance !== "undefined" ? performance.now() : 0) - t0);
     if (!result || !result.success) {
       throw new Error("Could not parse this STEP file (occt success=false).");
+    }
+    const meshCount = (result.meshes ?? []).length;
+    logDiagnostics("main-thread", meshCount, ms, []);
+    return { result, meshCount, logs: [], ms };
+  },
+
+  /**
+   * Parse one OpenCASCADE BREP shape into an occt result. FreeCAD .FCStd files
+   * store each object's geometry as a native BREP entry inside a ZIP; the
+   * FreeCAD loader unzips the archive and calls this once per visible object.
+   * Same worker/main-thread split as `parseStep`; `bytes` is transferred on the
+   * worker path and must not be reused.
+   */
+  async parseBrep(bytes: Uint8Array, params: OcctReadParams): Promise<ParseOutcome> {
+    if (workerSupported()) {
+      return parseInWorker(bytes, params, "brep");
+    }
+    const occt = await getModule();
+    if (!occt.ReadBrepFile) {
+      throw new Error("This occt build lacks BREP support (ReadBrepFile).");
+    }
+    const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+    const result = occt.ReadBrepFile(bytes, params);
+    const ms = Math.round((typeof performance !== "undefined" ? performance.now() : 0) - t0);
+    if (!result || !result.success) {
+      throw new Error("Could not parse this BREP shape (occt success=false).");
     }
     const meshCount = (result.meshes ?? []).length;
     logDiagnostics("main-thread", meshCount, ms, []);

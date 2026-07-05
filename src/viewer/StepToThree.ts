@@ -100,6 +100,35 @@ export function stepToThree(result: OcctResult): StepModel {
 }
 
 /**
+ * Build a viewer-ready group from a single parsed BREP shape (one FreeCAD
+ * object), baking `matrix` (the object's placement) into the vertices and
+ * forcing `color` (its ShapeColor) across every mesh. Returns the group plus the
+ * meshes built under it so the caller can assemble the structure tree. Shared
+ * output shape with `stepToThree`, so the FreeCAD path gets the identical viewer.
+ */
+export function occtResultToGroup(
+  result: OcctResult,
+  name: string,
+  matrix: THREE.Matrix4,
+  color: [number, number, number] | null,
+): { group: THREE.Group; meshes: THREE.Mesh[] } {
+  const withEdges = totalTriangles(result.meshes) <= EDGE_TRIANGLE_BUDGET;
+  const group = new THREE.Group();
+  group.name = name;
+  const built: THREE.Mesh[] = [];
+  (result.meshes ?? []).forEach((m, i) => {
+    const mesh = buildMesh(m, withEdges, { matrix, colorOverride: color });
+    if (!mesh) return;
+    // BREP meshes come back unnamed; name them after their object so hover, the
+    // structure tree and part-info show something meaningful.
+    mesh.name = result.meshes.length > 1 ? `${name} ${i + 1}` : name;
+    group.add(mesh);
+    built.push(mesh);
+  });
+  return { group, meshes: built };
+}
+
+/**
  * Dump the parsed assembly hierarchy to the console. The structure tree can only
  * ever be as deep as what occt-import-js returns in `result.root`; if a user
  * sees fewer subassemblies than FreeCAD/other viewers, this shows exactly what
@@ -176,7 +205,23 @@ function buildNode(
   return { name: group.name, object: group, children };
 }
 
-function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
+/** Extra per-mesh options used by the FreeCAD loader (design: .FCStd support). */
+interface BuildMeshOptions {
+  // Bake this transform into the geometry so the built mesh (and its edge
+  // overlay) lands in model coordinates, matching the baked-transform convention
+  // the rest of the viewer relies on. Used for FreeCAD object placements.
+  matrix?: THREE.Matrix4;
+  // Force a single colour across the whole mesh, overriding both the mesh colour
+  // and any `brep_faces` segments. FreeCAD colours are per-object (ShapeColor),
+  // and BREP shapes carry no colour of their own.
+  colorOverride?: [number, number, number] | null;
+}
+
+function buildMesh(
+  mesh: OcctMesh,
+  withEdges: boolean,
+  options?: BuildMeshOptions,
+): THREE.Mesh | null {
   const positions = mesh.attributes?.position?.array;
   const indices = mesh.index?.array;
   if (!positions || positions.length === 0 || !indices || indices.length === 0) {
@@ -208,6 +253,11 @@ function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
 
   geometry.setIndex(new THREE.BufferAttribute(indexArray(indices), 1));
 
+  // Bake the placement transform (FreeCAD) into the vertices before normals are
+  // (re)computed and before the edge overlay is built, so geometry, normals and
+  // edges all agree — matching the viewer's baked-transform convention.
+  if (options?.matrix) geometry.applyMatrix4(options.matrix);
+
   if (!normalsUsable) {
     if (normals && normals.length === positions.length) {
       console.warn(
@@ -219,7 +269,10 @@ function buildMesh(mesh: OcctMesh, withEdges: boolean): THREE.Mesh | null {
     geometry.computeVertexNormals();
   }
 
-  const material = buildMaterials(mesh, geometry);
+  const material =
+    options?.colorOverride !== undefined
+      ? standardMaterial(options.colorOverride)
+      : buildMaterials(mesh, geometry);
 
   const threeMesh = new THREE.Mesh(geometry, material);
   threeMesh.name = mesh.name || "mesh";

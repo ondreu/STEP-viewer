@@ -8,6 +8,7 @@ import {
 import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache";
 import { mountViewer, mountModel, ViewerHandle } from "../viewer/mountViewer";
 import { objToStepModel, stlToStepModel } from "../viewer/MeshLoaders";
+import { fcstdToStepModel } from "../viewer/FreeCadLoader";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes, isWireframeOnly } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
@@ -109,6 +110,27 @@ export class StepView extends FileView {
           ext === "obj"
             ? objToStepModel(new TextDecoder().decode(buffer), file.basename)
             : stlToStepModel(buffer, file.basename);
+        loadingEl.remove();
+        this.viewer = mountModel(host, model, {
+          plugin: this.plugin,
+          filePath: file.path,
+          healFaces: settings.healFaces,
+        });
+        return;
+      }
+
+      // FreeCAD documents (.FCStd): a ZIP of native BREP shapes. Unzip and parse
+      // each visible object's BREP through OCCT (see FreeCadLoader). Not cached —
+      // the geometry cache keys a single OCCT parse, not this multi-shape build.
+      if (ext === "fcstd") {
+        const buffer = await this.app.vault.readBinary(file);
+        if (token !== this.loadToken) return;
+        const model = await fcstdToStepModel(
+          new Uint8Array(buffer),
+          file.basename,
+          paramsForDeflection(deflection),
+        );
+        if (token !== this.loadToken) return;
         loadingEl.remove();
         this.viewer = mountModel(host, model, {
           plugin: this.plugin,

@@ -1,7 +1,7 @@
 {
   "name": "obsidian-step-viewer",
-  "version": "1.12.1",
-  "description": "View STEP (.step/.stp) CAD models in a 3D viewer inside Obsidian.",
+  "version": "1.13.0",
+  "description": "View STEP (.step/.stp), FreeCAD (.FCStd), OBJ and STL CAD models in a 3D viewer inside Obsidian.",
   "main": "main.js",
   "scripts": {
     "patch-occt": "node scripts/patch-occt-memory.mjs",
@@ -28,6 +28,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "occt-import-js": "0.0.23",
     "three": "^0.160.0"
   }

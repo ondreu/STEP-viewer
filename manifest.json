@@ -1,9 +1,9 @@
 {
   "id": "step-viewer",
   "name": "STEP Viewer",
-  "version": "1.12.1",
+  "version": "1.13.0",
   "minAppVersion": "1.5.0",
-  "description": "Open and view STEP (.step/.stp) CAD models in an interactive 3D viewer.",
+  "description": "Open and view STEP (.step/.stp), FreeCAD (.FCStd), OBJ and STL CAD models in an interactive 3D viewer.",
   "author": "Ondřej Uhnavý",
   "authorUrl": "https://github.com/ondreu",
   "isDesktopOnly": false

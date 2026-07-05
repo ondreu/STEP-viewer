@@ -33,6 +33,9 @@ type ParseMessage = {
   id: number;
   bytes: Uint8Array;
   params: OcctReadParams | null;
+  // Which OCCT reader to use. STEP is the default; "brep" reads OpenCASCADE's
+  // native BREP shapes (the geometry stored inside FreeCAD .FCStd archives).
+  format?: "step" | "brep";
 };
 type InMessage = InitMessage | ParseMessage;
 
@@ -106,13 +109,19 @@ async function handleMessage(ev: MessageEvent): Promise<void> {
     return;
   }
 
-  const { id, bytes, params } = msg;
+  const { id, bytes, params, format } = msg;
   try {
     if (!modulePromise) throw new Error("occt worker received no init message");
     const occt = await modulePromise;
     logs = [];
     const t0 = now();
-    const result = occt.ReadStepFile(bytes, params);
+    let result: OcctResult;
+    if (format === "brep") {
+      if (!occt.ReadBrepFile) throw new Error("occt build lacks ReadBrepFile");
+      result = occt.ReadBrepFile(bytes, params);
+    } else {
+      result = occt.ReadStepFile(bytes, params);
+    }
     const ms = Math.round(now() - t0);
     if (!result || !result.success) {
       ctx.postMessage({ id, ok: false, error: "occt success=false", logs, ms });
