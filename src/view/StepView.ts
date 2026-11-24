@@ -7,8 +7,7 @@ import {
 } from "../viewer/params";
 import { cacheKey, resultBytes, CACHE_MIN_BYTES } from "../viewer/GeometryCache";
 import { mountViewer, mountModel, ViewerHandle } from "../viewer/mountViewer";
-import { objToStepModel, stlToStepModel } from "../viewer/MeshLoaders";
-import { fcstdToStepModel } from "../viewer/FreeCadLoader";
+import { isDirectFormat, loadDirectModel } from "../viewer/loadModel";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes, isWireframeOnly } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
@@ -99,34 +98,14 @@ export class StepView extends FileView {
     const key = cacheKey(file.path, file.stat.mtime, file.stat.size, deflection);
 
     try {
-      // Plain triangle-mesh formats (OBJ/STL) are parsed directly in the
-      // renderer — no OCCT, no cache. Useful on their own and as an escape
-      // hatch for STEP files with malformed faces (heal + re-export as OBJ).
-      const ext = file.extension.toLowerCase();
-      if (ext === "obj" || ext === "stl") {
+      // OBJ, STL and FreeCAD files skip the STEP reader. OBJ/STL double as an
+      // escape hatch for STEP files with malformed faces (heal + re-export).
+      if (isDirectFormat(file.extension)) {
         const buffer = await this.app.vault.readBinary(file);
         if (token !== this.loadToken) return;
-        const model =
-          ext === "obj"
-            ? objToStepModel(new TextDecoder().decode(buffer), file.basename)
-            : stlToStepModel(buffer, file.basename);
-        loadingEl.remove();
-        this.viewer = mountModel(host, model, {
-          plugin: this.plugin,
-          filePath: file.path,
-          healFaces: settings.healFaces,
-        });
-        return;
-      }
-
-      // FreeCAD documents (.FCStd): a ZIP of native BREP shapes. Unzip and parse
-      // each visible object's BREP through OCCT (see FreeCadLoader). Not cached —
-      // the geometry cache keys a single OCCT parse, not this multi-shape build.
-      if (ext === "fcstd") {
-        const buffer = await this.app.vault.readBinary(file);
-        if (token !== this.loadToken) return;
-        const model = await fcstdToStepModel(
-          new Uint8Array(buffer),
+        const model = await loadDirectModel(
+          file.extension,
+          buffer,
           file.basename,
           paramsForDeflection(deflection),
         );
