@@ -4,6 +4,7 @@ import { StepEmbed } from "./embed/StepEmbed";
 import { StepViewerSettings, DEFAULT_SETTINGS } from "./settings";
 import { Profile, QualityTier, tiersForProfile } from "./viewer/params";
 import { GeometryCache } from "./viewer/GeometryCache";
+import { updatePluginData } from "./annotations/pluginData";
 
 const FILE_EXTENSIONS = ["step", "stp", "obj", "stl", "fcstd"];
 
@@ -54,7 +55,13 @@ export default class StepViewerPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as Partial<StepViewerSettings> | null;
-    this.stepSettings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
+    // data.json also holds notes and measurements (see pluginData.ts). Take only
+    // the settings, or saving them would write back a stale copy of the rest.
+    const { profile, tiers, cacheEnabled, cacheMaxMB, healFaces } = {
+      ...DEFAULT_SETTINGS,
+      ...(data ?? {}),
+    };
+    this.stepSettings = { profile, tiers, cacheEnabled, cacheMaxMB, healFaces };
     // A malformed/empty stored tier list would silently disable size scaling.
     if (!Array.isArray(this.stepSettings.tiers) || this.stepSettings.tiers.length === 0) {
       this.stepSettings.tiers = tiersForProfile("fastest");
@@ -63,7 +70,9 @@ export default class StepViewerPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.stepSettings);
+    await updatePluginData(this, (data) => {
+      Object.assign(data, this.stepSettings);
+    });
   }
 
   // onunload: Obsidian de-registers views/extensions registered via this.register*
