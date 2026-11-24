@@ -574,6 +574,23 @@
   background-color: var(--background-primary);
 }
 
+/* --- `![[model.step]]` embeds (sized here unless the link sets a size) --- */
+.internal-embed.step-viewer-embed {
+  display: block;
+  max-width: 100%;
+}
+
+.step-viewer-embed > .step-viewer-embed-host {
+  height: 400px;
+}
+
+/* A model on an Obsidian canvas fills its card. */
+.canvas-node-content.step-viewer-embed > .step-viewer-embed-host {
+  height: 100%;
+  border: none;
+  border-radius: 0;
+}
+
 .step-viewer-embed-placeholder {
   gap: var(--size-2-2);
 }

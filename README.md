@@ -163,6 +163,17 @@ visibility, auto-measure the selection's bounding box, filter by name, or
 
 ### Embedding a model in a note
 
+Embed a model the same way as an image. The size is optional, as a width
+(`|600`) or width × height (`|600x300`):
+
+```markdown
+![[bracket.step]]
+![[bracket.step|600x300]]
+```
+
+On a canvas, a model card shows the same viewer and fills the card. For more
+control over the view, use a `step` code block:
+
 ````markdown
 ```step
 path: Models/bracket.step
@@ -249,11 +260,12 @@ Source lives in `src/`:
 ```
 main.ts                     Plugin: registers view, extensions, embed processor
 view/StepView.ts            FileView: file lifecycle, owns the viewer
-embed/StepEmbed.ts          `step` code-block embed (lazy mount/dispose)
+embed/StepEmbed.ts          `step` code-block and `![[model]]` embeds (lazy mount/dispose)
 viewer/mountViewer.ts       Builds the full viewer + UI (shared by view & embed)
 viewer/OcctLoader.ts        Lazy singleton over the inlined occt-import-js WASM
 viewer/occt.worker.ts       Off-main-thread STEP/BREP parse (Web Worker)
 viewer/StepToThree.ts       occt result JSON -> THREE.Group + structure tree
+viewer/loadModel.ts         OBJ / STL / FreeCAD loading shared by view & embed
 viewer/MeshLoaders.ts       OBJ / STL parsing into the viewer model
 viewer/FreeCadLoader.ts     .FCStd unzip + Document/GuiDocument.xml + BREP shapes
 viewer/GeometryCache.ts     Off-vault (IndexedDB) parsed-geometry cache

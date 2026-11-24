@@ -1,4 +1,4 @@
-import { MarkdownRenderChild, Plugin, TFile } from "obsidian";
+import { App, Component, MarkdownRenderChild, Plugin, TFile } from "obsidian";
 import { OcctLoader } from "../viewer/OcctLoader";
 import {
   Profile,
@@ -6,7 +6,8 @@ import {
   paramsForDeflection,
   tiersForProfile,
 } from "../viewer/params";
-import { mountViewer, ViewerHandle } from "../viewer/mountViewer";
+import { mountModel, mountViewer, ViewerHandle } from "../viewer/mountViewer";
+import { isDirectFormat, loadDirectModel } from "../viewer/loadModel";
 import { formatFileSize, shouldWarnLargeModel } from "../viewer/mobileGuard";
 import { hasRenderableMeshes, isWireframeOnly } from "../viewer/StepToThree";
 import { METADATA_MAX_BYTES } from "../viewer/StepMeta";
@@ -16,6 +17,7 @@ import { HasStepSettings } from "../settings";
 const EMBED_PROFILES = new Set<Profile>(["fastest", "balanced", "detailed"]);
 
 const DEFAULT_HEIGHT = 400;
+const MIN_HEIGHT = 120;
 
 /**
  * Renders a ```step code block as an inline 3D viewer inside a note.
@@ -39,7 +41,7 @@ const DEFAULT_HEIGHT = 400;
 export class StepEmbed extends MarkdownRenderChild {
   private observer: IntersectionObserver | null = null;
   private viewer: ViewerHandle | null = null;
-  private host!: HTMLElement;
+  protected host!: HTMLElement;
   private linktext = "";
   private wantMounted = false;
   private busy = false;
@@ -120,6 +122,27 @@ export class StepEmbed extends MarkdownRenderChild {
 
       const settings = this.plugin.stepSettings;
       const deflection = this.deflectionFor(file.stat.size);
+
+      if (isDirectFormat(file.extension)) {
+        const model = await loadDirectModel(
+          file.extension,
+          await this.plugin.app.vault.readBinary(file),
+          file.basename,
+          paramsForDeflection(deflection),
+        );
+        if (!this.wantMounted) return;
+        this.host.empty();
+        this.viewer = mountModel(this.host, model, {
+          plugin: this.plugin,
+          filePath: file.path,
+          showAnnotations: this.opts.showAnnotations,
+          initialView: this.opts.view,
+          initialRoll: this.opts.roll,
+          healFaces: settings.healFaces,
+        });
+        return;
+      }
+
       const useCache = settings.cacheEnabled && file.stat.size >= CACHE_MIN_BYTES;
       const key = cacheKey(file.path, file.stat.mtime, file.stat.size, deflection);
 
@@ -207,7 +230,7 @@ export class StepEmbed extends MarkdownRenderChild {
     return deflectionForSize(sizeBytes, this.plugin.stepSettings.tiers);
   }
 
-  private resolveFile(linktext: string): TFile | null {
+  protected resolveFile(linktext: string): TFile | null {
     const dest = this.plugin.app.metadataCache.getFirstLinkpathDest(
       linktext,
       this.sourcePath,
@@ -260,6 +283,86 @@ export class StepEmbed extends MarkdownRenderChild {
   }
 }
 
+/** What Obsidian passes when it renders a `![[file]]` embed (the part used here). */
+interface EmbedContext {
+  containerEl: HTMLElement;
+  sourcePath?: string;
+}
+
+/**
+ * The registry Obsidian renders `![[file]]` embeds from, keyed by extension. It
+ * is not in the public API, so every use of it tolerates it being absent.
+ */
+interface EmbedRegistry {
+  isExtensionRegistered(ext: string): boolean;
+  registerExtension(ext: string, create: (ctx: EmbedContext, file: TFile) => Component): void;
+  unregisterExtension(ext: string): void;
+}
+
+/**
+ * `![[model.step]]` in a note: the same embed, for a file Obsidian has already
+ * resolved. `![[model.step|600]]` and `|600x300` set its size, as for images.
+ */
+class StepFileEmbed extends StepEmbed {
+  private sizeObserver: MutationObserver | null = null;
+
+  constructor(
+    ctx: EmbedContext,
+    plugin: Plugin & HasStepSettings,
+    private file: TFile,
+  ) {
+    super(ctx.containerEl, plugin, `path: ${file.path}`, ctx.sourcePath ?? "");
+  }
+
+  onload(): void {
+    super.onload();
+    // Tells live preview that a click here is for the viewer. Without it, every
+    // drag to orbit would also move the cursor into the link and reveal it.
+    this.host.addClass("interactive-child");
+    this.applySize();
+    // Live preview sets the size attributes only after the embed has loaded.
+    this.sizeObserver = new MutationObserver(() => this.applySize());
+    this.sizeObserver.observe(this.containerEl, { attributeFilter: ["width", "height"] });
+  }
+
+  onunload(): void {
+    this.sizeObserver?.disconnect();
+    this.sizeObserver = null;
+    super.onunload();
+  }
+
+  /** Obsidian calls this after `onload`, which has already set up the embed. */
+  loadFile(): void {}
+
+  protected resolveFile(): TFile {
+    return this.file;
+  }
+
+  /** Use the size from the link, otherwise leave it to the stylesheet. */
+  private applySize(): void {
+    const px = (name: string, min: number): string => {
+      const n = parseInt(this.containerEl.getAttribute(name) ?? "", 10);
+      return n > 0 ? `${Math.max(min, n)}px` : "";
+    };
+    this.containerEl.style.width = px("width", 0);
+    this.host.style.height = px("height", MIN_HEIGHT);
+  }
+}
+
+/** Show `![[model.step]]` as a viewer, except for types another plugin embeds. */
+export function registerFileEmbeds(
+  plugin: Plugin & HasStepSettings,
+  extensions: string[],
+): void {
+  const registry = (plugin.app as App & { embedRegistry?: EmbedRegistry }).embedRegistry;
+  if (!registry) return;
+  for (const ext of extensions) {
+    if (registry.isExtensionRegistered(ext)) continue;
+    registry.registerExtension(ext, (ctx, file) => new StepFileEmbed(ctx, plugin, file));
+    plugin.register(() => registry.unregisterExtension(ext));
+  }
+}
+
 interface ParsedSource {
   path: string;
   height: number;
@@ -285,7 +388,7 @@ function parseSource(source: string): ParsedSource {
         out.path = stripLink(value);
       } else if (key === "height") {
         const n = parseInt(value, 10);
-        if (!Number.isNaN(n)) out.height = Math.max(120, n);
+        if (!Number.isNaN(n)) out.height = Math.max(MIN_HEIGHT, n);
       } else if (key === "annotations") {
         out.showAnnotations = !/^(false|no|0|off)$/i.test(value);
       } else if (key === "view") {

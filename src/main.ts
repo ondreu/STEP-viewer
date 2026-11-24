@@ -1,6 +1,6 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { STEP_VIEW_TYPE, StepView } from "./view/StepView";
-import { StepEmbed } from "./embed/StepEmbed";
+import { StepEmbed, registerFileEmbeds } from "./embed/StepEmbed";
 import { StepViewerSettings, DEFAULT_SETTINGS } from "./settings";
 import { Profile, QualityTier, tiersForProfile } from "./viewer/params";
 import { GeometryCache } from "./viewer/GeometryCache";
@@ -34,6 +34,7 @@ export default class StepViewerPlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor("step", (source, el, ctx) => {
       ctx.addChild(new StepEmbed(el, this, source, ctx.sourcePath));
     });
+    registerFileEmbeds(this, FILE_EXTENSIONS);
 
     this.addSettingTab(new StepViewerSettingTab(this.app, this));
   }
