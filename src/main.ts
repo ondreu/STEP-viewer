@@ -5,6 +5,8 @@ import { StepViewerSettings, DEFAULT_SETTINGS } from "./settings";
 import { Profile, QualityTier, tiersForProfile } from "./viewer/params";
 import { GeometryCache } from "./viewer/GeometryCache";
 
+const FILE_EXTENSIONS = ["step", "stp", "obj", "stl", "fcstd"];
+
 /**
  * STEP Viewer plugin entry point (design doc §5.1).
  *
@@ -26,13 +28,28 @@ export default class StepViewerPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(STEP_VIEW_TYPE, (leaf) => new StepView(leaf, this));
-    this.registerExtensions(["step", "stp", "obj", "stl", "fcstd"], STEP_VIEW_TYPE);
+    this.registerFileTypes();
 
     this.registerMarkdownCodeBlockProcessor("step", (source, el, ctx) => {
       ctx.addChild(new StepEmbed(el, this, source, ctx.sourcePath));
     });
 
     this.addSettingTab(new StepViewerSettingTab(this.app, this));
+  }
+
+  /**
+   * Claim each file type on its own. `registerExtensions` throws when any of its
+   * extensions already belongs to another plugin, which would abort `onload`: a
+   * plugin that opens .obj would then cost the user .step as well.
+   */
+  private registerFileTypes(): void {
+    for (const ext of FILE_EXTENSIONS) {
+      try {
+        this.registerExtensions([ext], STEP_VIEW_TYPE);
+      } catch {
+        console.warn(`[STEP Viewer] .${ext} already belongs to another plugin; leaving it there.`);
+      }
+    }
   }
 
   async loadSettings(): Promise<void> {
